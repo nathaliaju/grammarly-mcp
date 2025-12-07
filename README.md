@@ -40,8 +40,8 @@ Single-tool Model Context Protocol (MCP) server for AI detection and plagiarism 
 
 ```bash
 # 1. Clone and build
-git clone https://github.com/BjornMelin/grammarly-browseruse-mcp-server.git
-cd grammarly-browseruse-mcp-server
+git clone https://github.com/BjornMelin/grammarly-mcp.git
+cd grammarly-mcp
 pnpm install && pnpm build
 
 # 2. Get Browserbase credentials
@@ -70,8 +70,8 @@ claude "Use grammarly_optimize_text with mode score_only on: Hello world test"
 
 ```bash
 # 1. Clone and build
-git clone https://github.com/BjornMelin/grammarly-browseruse-mcp-server.git
-cd grammarly-browseruse-mcp-server
+git clone https://github.com/BjornMelin/grammarly-mcp.git
+cd grammarly-mcp
 pnpm install && pnpm build
 
 # 2. Get Browser Use credentials
@@ -135,8 +135,8 @@ claude mcp add grammarly -- node $(pwd)/dist/server.js
 ## Installation
 
 ```bash
-git clone https://github.com/BjornMelin/grammarly-browseruse-mcp-server.git
-cd grammarly-browseruse-mcp-server
+git clone https://github.com/BjornMelin/grammarly-mcp.git
+cd grammarly-mcp
 pnpm install
 pnpm build
 ```
