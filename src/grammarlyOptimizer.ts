@@ -1,14 +1,10 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { BrowserUse } from "browser-use-sdk";
 import { type ZodType, z } from "zod";
 import {
-  BrowserUseLlmSchema,
-  createBrowserUseClient,
-  createGrammarlySession,
-  type GrammarlyScores,
-  type GrammarlyScoreTaskResult,
-  runGrammarlyScoreTask,
-} from "./browser/grammarlyTask";
+  type BrowserProvider,
+  createBrowserProvider,
+  type GrammarlyScoreResult,
+} from "./browser/provider";
 import type { AppConfig } from "./config";
 import { log } from "./config";
 import {
@@ -58,9 +54,6 @@ export const ToolInputSchema = z.object({
     .describe(
       "Extra constraints (e.g., preserve citations, do not change code blocks).",
     ),
-  browser_use_llm: BrowserUseLlmSchema.default("browser-use-llm").describe(
-    "LLM for Browser Use. Default 'browser-use-llm' is cheapest ($0.002/step) AND most optimized.",
-  ),
   proxy_country_code: z
     .string()
     .length(2)
@@ -81,7 +74,7 @@ export const ToolInputSchema = z.object({
     .max(100)
     .optional()
     .describe(
-      "Maximum Browser Use steps per scoring task (default 25). Prevents runaway tasks.",
+      "Maximum browser automation steps per scoring task (default 25). Prevents runaway tasks.",
     ),
 });
 
@@ -121,8 +114,12 @@ export const ToolOutputSchema: ZodType<StructuredContent> = z.object({
     .nullable()
     .optional()
     .describe(
-      "Real-time browser preview URL for debugging (from Browser Use session).",
+      "Real-time browser preview URL for debugging (from browser session).",
     ),
+  provider: z
+    .string()
+    .optional()
+    .describe("Browser automation provider used (stagehand or browser-use)."),
 });
 
 /** Callback for MCP progress notifications during optimization (0-100%). */
@@ -151,11 +148,19 @@ export interface GrammarlyOptimizeResult {
   history: HistoryEntry[];
   notes: string;
   live_url: string | null;
+  provider?: string;
+}
+
+/** @internal Exported for testing */
+export interface GrammarlyScores {
+  aiDetectionPercent: number | null;
+  plagiarismPercent: number | null;
 }
 
 // Threshold policy: require at least one available score to verify; any
 // unavailable score is treated as passing its respective threshold.
-function thresholdsMet(
+/** @internal Exported for testing */
+export function thresholdsMet(
   scores: GrammarlyScores,
   maxAiPercent: number,
   maxPlagiarismPercent: number,
@@ -182,8 +187,54 @@ function thresholdsMet(
 }
 
 /**
- * Orchestrates scoring, analysis, or iterative optimization via Browser Use
- * and Claude. Supports MCP 2025-11-25 progress notifications.
+ * Retry utility with exponential backoff.
+ * @internal Exported for testing
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  options: { maxRetries: number; backoffMs: number; label?: string },
+): Promise<T> {
+  if (options.maxRetries < 0) {
+    throw new RangeError("maxRetries must be non-negative");
+  }
+
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= options.maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      if (attempt < options.maxRetries) {
+        const delay = options.backoffMs * 2 ** attempt;
+        log("debug", `Retry attempt ${attempt + 1} after ${delay}ms`, {
+          label: options.label,
+          error:
+            lastError instanceof Error
+              ? lastError.message
+              : String(lastError ?? "unknown error"),
+        });
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  if (lastError === undefined) {
+    throw new Error("withRetry failed without error");
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+
+  throw lastError;
+}
+
+/**
+ * Orchestrates scoring, analysis, or iterative optimization via browser automation
+ * and Claude. Supports both Stagehand (Browserbase) and Browser Use Cloud providers.
+ * Includes MCP 2025-11-25 progress notifications.
  */
 export async function runGrammarlyOptimization(
   appConfig: AppConfig,
@@ -199,7 +250,6 @@ export async function runGrammarlyOptimization(
     tone,
     domain_hint,
     custom_instructions,
-    browser_use_llm,
     proxy_country_code,
     max_steps,
   } = input;
@@ -207,47 +257,70 @@ export async function runGrammarlyOptimization(
   const history: HistoryEntry[] = [];
 
   let currentText = text;
-  let lastScores: GrammarlyScoreTaskResult | null = null;
+  let lastScores: GrammarlyScoreResult | null = null;
   let iterationsUsed = 0;
   let reachedThresholds = false;
 
   // Progress: Creating browser session
-  await onProgress?.("Creating Browser Use session...", 5);
+  const providerName = appConfig.browserProvider;
+  await onProgress?.(
+    `Creating ${providerName === "stagehand" ? "Stagehand" : "Browser Use"} session...`,
+    5,
+  );
 
-  const browserUseClient = createBrowserUseClient(appConfig);
+  // Create provider based on configuration
+  let provider: BrowserProvider | undefined;
   let sessionId: string | null = null;
   let liveUrl: string | null = null;
 
-  // Enable flashMode for score_only mode (faster execution).
-  const flashMode = mode === "score_only";
-
   try {
-    const sessionResult = await createGrammarlySession(
-      browserUseClient,
-      appConfig,
-      { proxyCountryCode: proxy_country_code },
+    // Create provider with retry logic
+    provider = await withRetry(() => createBrowserProvider(appConfig), {
+      maxRetries: 2,
+      backoffMs: 1000,
+      label: "createProvider",
+    });
+
+    // Capture provider as a const for use in closures (TypeScript narrowing)
+    const activeProvider = provider;
+
+    log("info", `Using browser provider: ${activeProvider.providerName}`);
+
+    // Create session with retry logic
+    const sessionResult = await withRetry(
+      () =>
+        activeProvider.createSession({
+          proxyCountryCode: proxy_country_code,
+        }),
+      { maxRetries: 3, backoffMs: 1000, label: "createSession" },
     );
+
     sessionId = sessionResult.sessionId;
     liveUrl = sessionResult.liveUrl;
+
+    log("info", "Browser session created", {
+      sessionId,
+      liveUrl,
+      provider: activeProvider.providerName,
+    });
+
+    // Capture sessionId as a const for use in closures (TypeScript narrowing)
+    const activeSessionId = sessionId;
 
     // Progress: Initial scoring
     await onProgress?.("Running initial Grammarly scoring...", 10);
     log("info", "Running initial Grammarly scoring pass");
 
-    // Baseline scoring (iteration 0 before optimization loop).
-    lastScores = await runGrammarlyScoreTask(
-      browserUseClient,
-      sessionId,
-      currentText,
-      appConfig,
-      {
-        llm: browser_use_llm,
-        flashMode,
-        maxSteps: max_steps,
-        iteration: 0,
-        mode,
-      },
-      liveUrl,
+    // Baseline scoring (iteration 0 before optimization loop) with retry
+    lastScores = await withRetry(
+      () =>
+        activeProvider.scoreText(activeSessionId, currentText, {
+          maxSteps: max_steps,
+          iteration: 0,
+          mode,
+          flashMode: mode === "score_only",
+        }),
+      { maxRetries: 2, backoffMs: 2000, label: "initialScore" },
     );
 
     history.push({
@@ -279,6 +352,7 @@ export async function runGrammarlyOptimization(
         history,
         notes,
         live_url: liveUrl,
+        provider: activeProvider.providerName,
       };
     }
 
@@ -313,6 +387,7 @@ export async function runGrammarlyOptimization(
         history,
         notes: analysis,
         live_url: liveUrl,
+        provider: activeProvider.providerName,
       };
     }
 
@@ -352,8 +427,6 @@ export async function runGrammarlyOptimization(
       currentText = rewriteResult.rewrittenText;
 
       // Progress: Re-scoring for this iteration.
-      // Use a mid-iteration offset so scoring progress is strictly between
-      // rewrite in this iteration and rewrite of the next iteration.
       const scoringProgress = Math.max(
         15,
         Math.min(85, 15 + ((iteration - 1 + 0.5) / max_iterations) * 70),
@@ -363,20 +436,20 @@ export async function runGrammarlyOptimization(
         scoringProgress,
       );
 
-      // Re-score the new candidate in the same session.
-      lastScores = await runGrammarlyScoreTask(
-        browserUseClient,
-        sessionId,
-        currentText,
-        appConfig,
+      // Re-score the new candidate with retry logic
+      lastScores = await withRetry(
+        () =>
+          activeProvider.scoreText(activeSessionId, currentText, {
+            maxSteps: max_steps,
+            iteration,
+            mode,
+            flashMode: false,
+          }),
         {
-          llm: browser_use_llm,
-          flashMode: false, // Disable flashMode during optimization for accuracy
-          maxSteps: max_steps,
-          iteration,
-          mode,
+          maxRetries: 2,
+          backoffMs: 2000,
+          label: `score-iteration-${iteration}`,
         },
-        liveUrl,
       );
 
       reachedThresholds = thresholdsMet(
@@ -430,16 +503,16 @@ export async function runGrammarlyOptimization(
       history,
       notes,
       live_url: liveUrl,
+      provider: activeProvider.providerName,
     };
   } finally {
-    if (sessionId) {
+    // Cleanup session
+    if (sessionId && provider) {
       try {
-        await browserUseClient.sessions.deleteSession(
-          sessionId as unknown as BrowserUse.DeleteSessionSessionsSessionIdDeleteRequest,
-        );
-        log("debug", "Browser Use session closed", { sessionId });
+        await provider.closeSession(sessionId);
+        log("debug", "Browser session closed", { sessionId });
       } catch (error) {
-        log("warn", "Failed to close Browser Use session", {
+        log("warn", "Failed to close browser session", {
           sessionId,
           error,
         });

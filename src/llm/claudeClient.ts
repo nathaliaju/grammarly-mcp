@@ -63,7 +63,8 @@ const AnalysisSchema = z.object({
     ),
 });
 
-function chooseClaudeModel(
+/** @internal Exported for testing */
+export function chooseClaudeModel(
   textLength: number,
   maxIterations: number,
 ): "sonnet" | "opus" {
