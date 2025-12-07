@@ -1,0 +1,91 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Run lint and type-check once (not sharded)
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm type-check
+
+      - name: Lint
+        run: pnpm biome:check
+
+  # Run tests in parallel shards
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests with coverage
+        run: pnpm test:ci --shard=${{ matrix.shard }}/2
+        env:
+          BROWSER_PROVIDER: stagehand
+          BROWSERBASE_API_KEY: ci-test-key
+          BROWSERBASE_PROJECT_ID: ci-test-project
+          LOG_LEVEL: error
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: coverage/
+          retention-days: 5
+
+  # Merge coverage reports
+  coverage-report:
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+          path: coverage/
+
+      - name: Display coverage summary
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            echo "## Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
+            cat coverage/coverage-summary.json | jq -r '.total | "| Metric | Percent |\n|--------|--------|\n| Lines | \(.lines.pct)% |\n| Statements | \(.statements.pct)% |\n| Functions | \(.functions.pct)% |\n| Branches | \(.branches.pct)% |"' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Coverage summary not found" >> "$GITHUB_STEP_SUMMARY"
+          fi
