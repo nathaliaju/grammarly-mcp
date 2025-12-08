@@ -9,8 +9,9 @@ import { z } from "zod";
 
 // Load .env file if it exists
 const envPath = path.resolve(process.cwd(), ".env");
+const envFileExists = fs.existsSync(envPath);
 let dotenvConfig: Record<string, string> = {};
-if (fs.existsSync(envPath)) {
+if (envFileExists) {
   const result = dotenv.config({ path: envPath });
   if (result.parsed) {
     dotenvConfig = result.parsed;
@@ -22,6 +23,14 @@ const ignoreSystemEnv =
   (
     dotenvConfig.IGNORE_SYSTEM_ENV ?? process.env.IGNORE_SYSTEM_ENV
   )?.toLowerCase() === "true";
+
+if (ignoreSystemEnv && !envFileExists) {
+  console.error(
+    "[grammarly-mcp:error] IGNORE_SYSTEM_ENV=true but .env file not found at:",
+    envPath,
+  );
+  process.exit(1);
+}
 
 // Create the effective environment: either .env-only or merged with process.env
 const effectiveEnv = ignoreSystemEnv ? dotenvConfig : process.env;
@@ -63,6 +72,7 @@ export interface AppConfig {
   // Non-Claude model selection
   openaiModel: string;
   googleModel: string;
+  anthropicModel: string;
 
   // API keys for LLM provider detection
   claudeApiKey: string | undefined;
@@ -71,7 +81,7 @@ export interface AppConfig {
   anthropicApiKey: string | undefined;
 
   // General settings
-  claudeRequestTimeoutMs: number;
+  llmRequestTimeoutMs: number;
   connectTimeoutMs: number;
   logLevel: LogLevel;
   browserUseDefaultTimeoutMs: number;
@@ -122,6 +132,7 @@ const EnvSchema = z.object({
   // Non-Claude model selection
   OPENAI_MODEL: z.string().default("gpt-4o"),
   GOOGLE_MODEL: z.string().default("gemini-2.5-flash"),
+  ANTHROPIC_MODEL: z.string().default("claude-sonnet-4-20250514"),
 
   // API keys
   CLAUDE_API_KEY: z.string().optional(),
@@ -133,6 +144,12 @@ const EnvSchema = z.object({
   // General settings
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   CLAUDE_REQUEST_TIMEOUT_MS: z.preprocess((value) => {
+    if (typeof value === "string" && value.trim() !== "") {
+      return Number(value);
+    }
+    return undefined;
+  }, z.number().positive().optional()),
+  LLM_REQUEST_TIMEOUT_MS: z.preprocess((value) => {
     if (typeof value === "string" && value.trim() !== "") {
       return Number(value);
     }
@@ -231,6 +248,7 @@ export const config: AppConfig = {
   // Non-Claude model selection
   openaiModel: env.OPENAI_MODEL,
   googleModel: env.GOOGLE_MODEL,
+  anthropicModel: env.ANTHROPIC_MODEL,
 
   // API keys for LLM provider detection
   claudeApiKey: env.CLAUDE_API_KEY,
@@ -239,7 +257,10 @@ export const config: AppConfig = {
   anthropicApiKey: env.ANTHROPIC_API_KEY,
 
   // General settings
-  claudeRequestTimeoutMs: env.CLAUDE_REQUEST_TIMEOUT_MS ?? 2 * 60 * 1000,
+  llmRequestTimeoutMs:
+    env.LLM_REQUEST_TIMEOUT_MS ??
+    env.CLAUDE_REQUEST_TIMEOUT_MS ??
+    2 * 60 * 1000,
   connectTimeoutMs: env.CONNECT_TIMEOUT_MS ?? 30_000,
   logLevel: env.LOG_LEVEL,
   browserUseDefaultTimeoutMs: 5 * 60 * 1000,
@@ -247,6 +268,28 @@ export const config: AppConfig = {
   defaultMaxPlagiarismPercent: 5,
   defaultMaxIterations: 5,
 };
+
+/**
+ * Shared helper to choose an LLM provider based on available API keys.
+ * Priority: OpenAI > Google > Anthropic > Claude Code (CLI auth).
+ */
+export function detectProviderFromApiKeys(
+  configLike: Pick<
+    AppConfig,
+    "openaiApiKey" | "googleApiKey" | "anthropicApiKey" | "claudeApiKey"
+  >,
+): LLMProvider {
+  if (configLike.openaiApiKey) {
+    return "openai";
+  }
+  if (configLike.googleApiKey) {
+    return "google";
+  }
+  if (configLike.anthropicApiKey || configLike.claudeApiKey) {
+    return "anthropic";
+  }
+  return "claude-code";
+}
 
 // =============================================================================
 // Logging

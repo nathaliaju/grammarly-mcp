@@ -140,7 +140,7 @@ Simpler setup, less reliable for production.
 - **Stagehand pattern**: observe() for element discovery, act() for interaction, extract() for structured data.
 - **Session persistence**: Browserbase contexts store login state. Set BROWSERBASE_CONTEXT_ID to skip Grammarly login on subsequent runs.
 - **Self-healing**: Stagehand's selfHeal option handles DOM changes automatically.
-- **Model selection**: Separate LLM providers for Stagehand (browser) and rewriting (text). Claude auto-selects: Haiku (<3k chars, ≤3 iterations), Sonnet (default), Opus (>12k chars or >8 iterations).
+- **Model selection**: Separate LLM providers for Stagehand (browser) and rewriting (text). Claude auto-selects based on text length and iteration count: Haiku (<3k chars, ≤3 iterations), Sonnet (default), Opus (>12k chars or >8 iterations).
 - **Null scores**: Grammarly features may return null without Premium subscription.
 
 ## Environment Variables
@@ -178,7 +178,8 @@ If not set, auto-detects from API keys (OpenAI > Google > Anthropic > Claude Cod
 
 ### Model Selection
 
-- `CLAUDE_MODEL` - `auto` (default) | `haiku` | `sonnet` | `opus`. Auto selects by text length/iterations.
+- `CLAUDE_MODEL` - `auto` (default) | `haiku` | `sonnet` | `opus`. Auto-selects based on text length and iteration count.
+- `ANTHROPIC_MODEL` - Anthropic model id for direct provider (default: `claude-sonnet-4-20250514`).
 - `OPENAI_MODEL` - OpenAI model (default: `gpt-4o`)
 - `GOOGLE_MODEL` - Google model (default: `gemini-2.5-flash`)
 
@@ -192,7 +193,7 @@ If not set, auto-detects from API keys (OpenAI > Google > Anthropic > Claude Cod
 ### General
 
 - `LOG_LEVEL` - debug | info | warn | error (default: info)
-- `CLAUDE_REQUEST_TIMEOUT_MS` - LLM request timeout (default: 120000)
+- `LLM_REQUEST_TIMEOUT_MS` - LLM request timeout (default: 120000). `CLAUDE_REQUEST_TIMEOUT_MS` remains supported for backwards compatibility.
 - `CONNECT_TIMEOUT_MS` - Browser connection timeout (default: 30000)
 
 ## Key Files

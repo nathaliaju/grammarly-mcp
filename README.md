@@ -234,7 +234,8 @@ If not set, auto-detects from API keys (priority: OpenAI > Google > Anthropic > 
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `CLAUDE_MODEL` | No | `auto` | Claude model: `auto`, `haiku`, `sonnet`, `opus`. Auto selects by text length/iterations. |
+| `CLAUDE_MODEL` | No | `auto` | Claude model: `auto`, `haiku`, `sonnet`, `opus`. Auto-selects based on text length and iteration count. |
+| `ANTHROPIC_MODEL` | No | `claude-sonnet-4-20250514` | Anthropic model id when using direct Anthropic provider. |
 | `OPENAI_MODEL` | No | `gpt-4o` | OpenAI model name |
 | `GOOGLE_MODEL` | No | `gemini-2.5-flash` | Google/Gemini model name |
 
@@ -254,7 +255,7 @@ If not set, auto-detects from API keys (priority: OpenAI > Google > Anthropic > 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
-| `CLAUDE_REQUEST_TIMEOUT_MS` | No | `120000` | Claude request timeout (ms) |
+| `LLM_REQUEST_TIMEOUT_MS` | No | `120000` | LLM request timeout (ms). `CLAUDE_REQUEST_TIMEOUT_MS` is still accepted for compatibility. |
 | `CONNECT_TIMEOUT_MS` | No | `30000` | MCP connection timeout (ms) |
 
 ---

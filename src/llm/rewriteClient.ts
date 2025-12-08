@@ -1,7 +1,7 @@
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import type { AppConfig, ClaudeModel, LLMProvider } from "../config";
-import { log } from "../config";
+import { detectProviderFromApiKeys, log } from "../config";
 
 export const RewriterToneSchema = z.enum([
   "neutral",
@@ -56,17 +56,7 @@ export function detectRewriteProvider(config: AppConfig): RewriteProvider {
   if (config.rewriteLlmProvider) {
     return config.rewriteLlmProvider;
   }
-  // Auto-detect from API keys
-  if (config.openaiApiKey) {
-    return "openai";
-  }
-  if (config.googleApiKey) {
-    return "google";
-  }
-  if (config.anthropicApiKey || config.claudeApiKey) {
-    return "anthropic";
-  }
-  return "claude-code";
+  return detectProviderFromApiKeys(config);
 }
 
 /**
@@ -125,7 +115,7 @@ async function getRewriteModel(
     }
     case "anthropic": {
       const { anthropic } = await import("@ai-sdk/anthropic");
-      const modelId = "claude-sonnet-4-20250514";
+      const modelId = config.anthropicModel;
       return { model: anthropic(modelId), modelId };
     }
     default: {
@@ -252,7 +242,7 @@ export async function rewriteText(
     "-----",
   ].join("\n");
 
-  const timeoutMs = appConfig.claudeRequestTimeoutMs;
+  const timeoutMs = appConfig.llmRequestTimeoutMs;
   log("info", "Calling for rewrite", { provider, modelId });
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -366,7 +356,7 @@ export async function analyzeText(
 
   log("info", "Calling for analysis", { provider, modelId });
 
-  const timeoutMs = appConfig.claudeRequestTimeoutMs;
+  const timeoutMs = appConfig.llmRequestTimeoutMs;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   try {
@@ -432,7 +422,7 @@ export async function summarizeOptimization(
     1,
   );
 
-  const timeoutMs = appConfig.claudeRequestTimeoutMs;
+  const timeoutMs = appConfig.llmRequestTimeoutMs;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   const prompt = [

@@ -1,6 +1,6 @@
 import type { AISdkClient } from "@browserbasehq/stagehand";
 import type { AppConfig, LLMProvider } from "../config";
-import { log } from "../config";
+import { detectProviderFromApiKeys, log } from "../config";
 
 export type { LLMProvider };
 
@@ -21,14 +21,9 @@ export function detectLlmProvider(config: AppConfig): LLMProvider {
   }
 
   // Priority 2: Auto-detection from API keys via config (respects IGNORE_SYSTEM_ENV)
-  if (config.openaiApiKey) {
-    return "openai";
-  }
-  if (config.googleApiKey) {
-    return "google";
-  }
-  if (config.anthropicApiKey || config.claudeApiKey) {
-    return "anthropic";
+  const autoProvider = detectProviderFromApiKeys(config);
+  if (autoProvider !== "claude-code") {
+    return autoProvider;
   }
 
   // Default to Claude Code CLI auth (no API key required)
@@ -69,7 +64,7 @@ export async function createStagehandLlmClient(
     case "anthropic": {
       const { anthropic } = await import("@ai-sdk/anthropic");
       return new AISdkClient({
-        model: anthropic("claude-sonnet-4-20250514"),
+        model: anthropic(config.anthropicModel),
       });
     }
 
@@ -98,7 +93,7 @@ export function getLlmModelName(
     case "openai":
       return config.openaiModel;
     case "anthropic":
-      return "claude-sonnet-4-20250514";
+      return config.anthropicModel;
     case "google":
       return config.googleModel;
     default:

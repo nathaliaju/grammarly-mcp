@@ -28,6 +28,7 @@ import {
   createBrowserUseClient,
   createGrammarlySession,
   runGrammarlyScoreTask,
+  BrowserUseLlmSchema,
   type BrowserUseLlm,
 } from "../../../src/browser/grammarlyTask";
 
@@ -47,11 +48,12 @@ const baseConfig: AppConfig = {
   claudeModel: "auto",
   openaiModel: "gpt-4o",
   googleModel: "gemini-2.5-flash",
+  anthropicModel: "claude-sonnet-4-20250514",
   claudeApiKey: "test-claude-key",
   openaiApiKey: undefined,
   googleApiKey: undefined,
   anthropicApiKey: undefined,
-  claudeRequestTimeoutMs: 120000,
+  llmRequestTimeoutMs: 120000,
   connectTimeoutMs: 30000,
   logLevel: "error",
   browserUseDefaultTimeoutMs: 300000,
@@ -398,7 +400,7 @@ describe("runGrammarlyScoreTask", () => {
     });
 
     it("uses default timeout when not in config", async () => {
-      const { browserUseDefaultTimeoutMs, ...configNoTimeout } = baseConfig;
+      const { browserUseDefaultTimeoutMs: _, ...configNoTimeout } = baseConfig;
 
       await runGrammarlyScoreTask(
         client,
@@ -612,36 +614,24 @@ describe("runGrammarlyScoreTask", () => {
 });
 
 describe("BrowserUseLlmSchema", () => {
-  // Import the schema for validation tests
-  it("accepts valid LLM options", async () => {
-    const { BrowserUseLlmSchema } =
-      await import("../../../src/browser/grammarlyTask");
-
-    const validLlms = [
-      "browser-use-llm",
-      "gpt-4o",
-      "gpt-4o-mini",
-      "claude-sonnet-4-20250514",
-      "gemini-flash-latest",
-    ];
-
-    for (const llm of validLlms) {
-      const result = BrowserUseLlmSchema.safeParse(llm);
-      expect(result.success).toBe(true);
-    }
+  it.each([
+    "browser-use-llm",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "claude-sonnet-4-20250514",
+    "gemini-flash-latest",
+  ])("accepts valid LLM option: %s", (llm) => {
+    const result = BrowserUseLlmSchema.safeParse(llm);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects invalid LLM options", async () => {
-    const { BrowserUseLlmSchema } =
-      await import("../../../src/browser/grammarlyTask");
-
-    const invalidLlms = ["invalid-model", "gpt-5", "claude-4"];
-
-    for (const llm of invalidLlms) {
+  it.each(["invalid-model", "gpt-5", "claude-4"])(
+    "rejects invalid LLM option: %s",
+    (llm) => {
       const result = BrowserUseLlmSchema.safeParse(llm);
       expect(result.success).toBe(false);
     }
-  });
+  );
 });
 
 describe("GrammarlyScoresSchema", () => {
