@@ -1,26 +1,33 @@
 import type { AISdkClient } from "@browserbasehq/stagehand";
-import type { AppConfig } from "../config";
+import type { AppConfig, LLMProvider } from "../config";
 import { log } from "../config";
 
-export type LLMProvider = "claude-code" | "openai" | "anthropic" | "google";
+export type { LLMProvider };
 
 /**
- * Detect which LLM provider to use based on available credentials.
- * Priority: OpenAI > Google > Anthropic > Claude Code CLI (default)
+ * Detect which LLM provider to use for Stagehand based on config.
+ * Priority: explicit STAGEHAND_LLM_PROVIDER > API key detection > claude-code
  *
- * The detection checks environment variables for explicit API keys first,
- * then checks config.claudeApiKey for Anthropic, falling back to
- * Claude Code CLI authentication when no credentials are present.
+ * Uses config fields instead of process.env to respect IGNORE_SYSTEM_ENV.
  */
 export function detectLlmProvider(config: AppConfig): LLMProvider {
-  // Check for explicit API keys in environment (most specific wins)
-  if (process.env.OPENAI_API_KEY) {
+  // Priority 1: Explicit Stagehand provider selection (highest priority)
+  if (config.stagehandLlmProvider) {
+    log(
+      "debug",
+      `Using explicitly configured Stagehand LLM provider: ${config.stagehandLlmProvider}`,
+    );
+    return config.stagehandLlmProvider;
+  }
+
+  // Priority 2: Auto-detection from API keys via config (respects IGNORE_SYSTEM_ENV)
+  if (config.openaiApiKey) {
     return "openai";
   }
-  if (process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY) {
+  if (config.googleApiKey) {
     return "google";
   }
-  if (process.env.ANTHROPIC_API_KEY || config.claudeApiKey) {
+  if (config.anthropicApiKey || config.claudeApiKey) {
     return "anthropic";
   }
 
@@ -49,13 +56,14 @@ export async function createStagehandLlmClient(
     case "claude-code": {
       // Primary: ai-sdk-provider-claude-code (Pro/Max subscription via CLI)
       const { claudeCode } = await import("ai-sdk-provider-claude-code");
-      return new AISdkClient({ model: claudeCode("sonnet") });
+      const modelId =
+        config.claudeModel === "auto" ? "sonnet" : config.claudeModel;
+      return new AISdkClient({ model: claudeCode(modelId) });
     }
 
     case "openai": {
       const { openai } = await import("@ai-sdk/openai");
-      const modelId = config.stagehandModel ?? "gpt-4o";
-      return new AISdkClient({ model: openai(modelId) });
+      return new AISdkClient({ model: openai(config.openaiModel) });
     }
 
     case "anthropic": {
@@ -67,8 +75,7 @@ export async function createStagehandLlmClient(
 
     case "google": {
       const { google } = await import("@ai-sdk/google");
-      const modelId = config.stagehandModel ?? "gemini-2.5-flash";
-      return new AISdkClient({ model: google(modelId) });
+      return new AISdkClient({ model: google(config.googleModel) });
     }
 
     default:
@@ -87,13 +94,13 @@ export function getLlmModelName(
 
   switch (actualProvider) {
     case "claude-code":
-      return "claude-code/sonnet";
+      return `claude-code/${config.claudeModel === "auto" ? "sonnet" : config.claudeModel}`;
     case "openai":
-      return config.stagehandModel ?? "gpt-4o";
+      return config.openaiModel;
     case "anthropic":
       return "claude-sonnet-4-20250514";
     case "google":
-      return config.stagehandModel ?? "gemini-2.5-flash";
+      return config.googleModel;
     default:
       return "unknown";
   }
