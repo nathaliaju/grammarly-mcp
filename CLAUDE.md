@@ -51,7 +51,7 @@ tests/
 │   │       ├── stagehandProvider.test.ts
 │   │       └── grammarlyTask.test.ts
 │   └── llm/
-│       ├── claudeClient.test.ts
+│       ├── rewriteClient.test.ts
 │       └── stagehandLlm.test.ts
 └── integration/          # Tests requiring more isolation
     └── stagehandProvider.test.ts
@@ -94,7 +94,7 @@ MCP Server (stdio transport)
         │
         ├── llm/
         │   ├── stagehandLlm.ts   (multi-provider LLM for Stagehand)
-        │   └── claudeClient.ts   (Claude for rewrites via Vercel AI SDK)
+        │   └── rewriteClient.ts  (multi-provider LLM for text rewrites)
         │
         └── config.ts  (dual-provider env validation, logging)
 ```
@@ -140,10 +140,14 @@ Simpler setup, less reliable for production.
 - **Stagehand pattern**: observe() for element discovery, act() for interaction, extract() for structured data.
 - **Session persistence**: Browserbase contexts store login state. Set BROWSERBASE_CONTEXT_ID to skip Grammarly login on subsequent runs.
 - **Self-healing**: Stagehand's selfHeal option handles DOM changes automatically.
-- **Model selection**: Claude Sonnet default; Opus for long inputs (>12k chars) or heavy loops (>8 iterations).
+- **Model selection**: Separate LLM providers for Stagehand (browser) and rewriting (text). Claude auto-selects: Haiku (<3k chars, ≤3 iterations), Sonnet (default), Opus (>12k chars or >8 iterations).
 - **Null scores**: Grammarly features may return null without Premium subscription.
 
 ## Environment Variables
+
+### Environment Isolation
+
+- `IGNORE_SYSTEM_ENV` - When `true`, ignores shell env vars and uses only `.env` file. Prevents IDE-inherited env pollution.
 
 ### Provider Config
 
@@ -155,19 +159,41 @@ Simpler setup, less reliable for production.
 - `BROWSERBASE_PROJECT_ID` - Required. From Browserbase dashboard
 - `BROWSERBASE_CONTEXT_ID` - Optional. Persistent login context
 - `BROWSERBASE_SESSION_ID` - Optional. Reuse existing session
-- `STAGEHAND_MODEL` - Optional. LLM model (default: gemini-2.5-flash)
+- `STAGEHAND_MODEL` - Deprecated. Use `STAGEHAND_LLM_PROVIDER` + model vars instead
 - `STAGEHAND_CACHE_DIR` - Optional. Action caching directory
-- `GOOGLE_GENERATIVE_AI_API_KEY` - Required for Google/Gemini models. Also accepts `GEMINI_API_KEY`
 
 ### Browser Use (when BROWSER_PROVIDER=browser-use)
 
 - `BROWSER_USE_API_KEY` - Required. From cloud.browser-use.com
 - `BROWSER_USE_PROFILE_ID` - Required. Synced profile with Grammarly login
 
-### Claude & General
+### LLM Provider Controls
+
+Separate LLM providers for browser automation and text rewriting:
+
+- `STAGEHAND_LLM_PROVIDER` - LLM for browser automation: `claude-code` | `openai` | `google` | `anthropic`
+- `REWRITE_LLM_PROVIDER` - LLM for text rewriting: `claude-code` | `openai` | `google` | `anthropic`
+
+If not set, auto-detects from API keys (OpenAI > Google > Anthropic > Claude Code).
+
+### Model Selection
+
+- `CLAUDE_MODEL` - `auto` (default) | `haiku` | `sonnet` | `opus`. Auto selects by text length/iterations.
+- `OPENAI_MODEL` - OpenAI model (default: `gpt-4o`)
+- `GOOGLE_MODEL` - Google model (default: `gemini-2.5-flash`)
+
+### API Keys
 
 - `CLAUDE_API_KEY` - Optional. Falls back to `claude login` CLI auth
+- `OPENAI_API_KEY` - Required for OpenAI provider
+- `GOOGLE_GENERATIVE_AI_API_KEY` - Required for Google provider. Also accepts `GEMINI_API_KEY`
+- `ANTHROPIC_API_KEY` - Required for direct Anthropic provider
+
+### General
+
 - `LOG_LEVEL` - debug | info | warn | error (default: info)
+- `CLAUDE_REQUEST_TIMEOUT_MS` - LLM request timeout (default: 120000)
+- `CONNECT_TIMEOUT_MS` - Browser connection timeout (default: 30000)
 
 ## Key Files
 
@@ -180,6 +206,6 @@ Simpler setup, less reliable for production.
 | `src/browser/stagehand/schemas.ts`        | Zod schemas for score extraction           |
 | `src/browser/browserUseProvider.ts`       | Browser Use provider (fallback)            |
 | `src/llm/stagehandLlm.ts`                 | Multi-provider LLM client for Stagehand    |
-| `src/llm/claudeClient.ts`                 | Claude client for text rewriting           |
+| `src/llm/rewriteClient.ts`                | Multi-provider LLM client for text rewriting |
 | `src/grammarlyOptimizer.ts`               | Main optimization loop with retry logic    |
 | `src/config.ts`                           | Environment validation and AppConfig       |
