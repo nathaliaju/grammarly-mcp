@@ -14,7 +14,7 @@ import {
 /**
  * Format optimization result as human-readable markdown.
  */
-function formatAsMarkdown(result: GrammarlyOptimizeResult): string {
+export function formatAsMarkdown(result: GrammarlyOptimizeResult): string {
   const statusEmoji = result.thresholds_met ? "✅" : "⚠️";
   const aiScore =
     result.ai_detection_percent !== null
@@ -91,7 +91,7 @@ function formatAsMarkdown(result: GrammarlyOptimizeResult): string {
 async function main(): Promise<void> {
   const server = new McpServer(
     {
-      name: "grammarly-browseruse-mcp-server",
+      name: "grammarly-mcp",
       version: "0.1.0",
     },
     {

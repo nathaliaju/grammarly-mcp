@@ -1,39 +1,31 @@
-# Grammarly Browser Use MCP Server
+# Grammarly MCP Server
 
-Single-tool Model Context Protocol (MCP) server that:
+Single-tool Model Context Protocol (MCP) server for AI detection and plagiarism scoring via Grammarly's web interface. Supports two browser automation providers: **Stagehand + Browserbase** (default) and **Browser Use Cloud** (fallback).
 
-- Uses **Browser Use Cloud** to drive a real browser session bound to a
-  **Browser Use profile** already logged into Grammarly / Superhuman docs.
-- Uses **Grammarly's docs UI** (AI Detector + Plagiarism Checker agents) to
-  obtain AI detection and plagiarism scores – **no Grammarly APIs**.
-- Uses **Vercel AI SDK v5 (`ai`) + `ai-sdk-provider-claude-code`** to analyze
-  and rewrite text via your Claude Pro / Max / Claude Code setup.
-- Exposes exactly **one MCP tool**: `grammarly_optimize_text`.
+## What it does
 
-> **Note:** This server never calls Grammarly's public or enterprise APIs. It only
-> interacts with the app.grammarly.com docs UI through Browser Use Cloud.
+- Automates Grammarly's docs UI to get AI detection and plagiarism percentages
+- Rewrites text via Claude to reduce AI detection scores
+- Exposes one MCP tool: `grammarly_optimize_text`
+
+> **Note:** This server interacts with app.grammarly.com through browser automation. It does not use Grammarly APIs.
 
 ---
 
 ## Table of Contents
 
-- [Quick Start (5 Minutes)](#quick-start-5-minutes)
+- [Quick Start](#quick-start)
+- [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Provider Selection](#provider-selection)
 - [Environment Variables](#environment-variables)
 - [Running the Server](#running-the-server)
 - [Client Configuration](#client-configuration)
-  - [Claude Code CLI](#claude-code-cli)
-  - [Claude Desktop](#claude-desktop)
-  - [Cursor](#cursor)
-  - [VS Code (Copilot / Continue)](#vs-code-copilot--continue)
-  - [Windsurf](#windsurf)
-  - [OpenAI Codex CLI](#openai-codex-cli)
-  - [Generic stdio MCP Hosts](#generic-stdio-mcp-hosts)
 - [Tool: grammarly_optimize_text](#tool-grammarly_optimize_text)
-  - [Browser Use LLM Options](#browser-use-llm-options)
+- [Session Persistence](#session-persistence)
 - [How It Works](#how-it-works)
-- [Example Usage](#example-usage)
+- [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Security Considerations](#security-considerations)
 - [Notes and Limitations](#notes-and-limitations)
@@ -41,103 +33,208 @@ Single-tool Model Context Protocol (MCP) server that:
 
 ---
 
-## Quick Start (5 Minutes)
+## Quick Start
 
-**Prerequisites:** Node.js 18+, Grammarly Pro account, Claude Code CLI (`npm install -g @anthropic-ai/claude-code && claude login`)
+### Option A: Stagehand + Browserbase (Recommended)
+
+**Prerequisites:** Node.js 18+, Grammarly Pro account, [Browserbase](https://www.browserbase.com) account
 
 ```bash
 # 1. Clone and build
-git clone https://github.com/your-username/grammarly-browseruse-mcp-server.git
-cd grammarly-browseruse-mcp-server
+git clone https://github.com/BjornMelin/grammarly-mcp.git
+cd grammarly-mcp
 pnpm install && pnpm build
 
-# 2. Get Browser Use credentials
-# Sign up at https://cloud.browser-use.com
-# Create API key → copy bu_... key
-# Create profile → sync your Grammarly login → copy profile_... ID
+# 2. Get Browserbase credentials
+# - Sign up at https://www.browserbase.com
+# - Create a project, note the Project ID
+# - Generate an API key
 
-# 3. Configure environment
+# 3. Set up Claude Code CLI (for text rewriting)
+npm install -g @anthropic-ai/claude-code
+claude login
+
+# 4. Configure environment
 cp .env.example .env
-# Edit .env with your BROWSER_USE_API_KEY and BROWSER_USE_PROFILE_ID
+# Edit .env with your Browserbase credentials
 
-# 4. Add to Claude Code
-claude mcp add grammarly-browseruse -- node $(pwd)/dist/server.js
+# 5. Add to Claude Code
+claude mcp add grammarly -- node $(pwd)/dist/server.js
 
-# 5. Test it
+# 6. Test
 claude "Use grammarly_optimize_text with mode score_only on: Hello world test"
 ```
 
-For detailed setup including other MCP clients (Cursor, VS Code, Windsurf), see sections below.
+### Option B: Browser Use Cloud (Legacy)
+
+**Prerequisites:** Node.js 18+, Grammarly Pro account, [Browser Use Cloud](https://cloud.browser-use.com) account
+
+```bash
+# 1. Clone and build
+git clone https://github.com/BjornMelin/grammarly-mcp.git
+cd grammarly-mcp
+pnpm install && pnpm build
+
+# 2. Get Browser Use credentials
+# - Sign up at https://cloud.browser-use.com
+# - Create API key (bu_...)
+# - Create profile and sync Grammarly login (profile_...)
+
+# 3. Set up Claude Code CLI
+npm install -g @anthropic-ai/claude-code
+claude login
+
+# 4. Configure environment
+cp .env.example .env
+# Set BROWSER_PROVIDER=browser-use and Browser Use credentials
+
+# 5. Add to Claude Code
+claude mcp add grammarly -- node $(pwd)/dist/server.js
+```
+
+---
+
+## Features
+
+- **Dual provider support**: Stagehand + Browserbase (default) or Browser Use Cloud (fallback)
+- **Session persistence**: Browserbase contexts preserve Grammarly login across sessions
+- **Self-healing automation**: Stagehand adapts to DOM changes automatically
+- **Multi-LLM support**: Claude Code CLI, OpenAI, Anthropic, or Google for browser automation
+- **Live debug URLs**: Real-time browser preview during execution
+- **Action caching**: Optional caching for faster repeated operations
+- **Structured output**: JSON or markdown response formats
+- **Progress notifications**: MCP 2025-11-25 progress tracking support
 
 ---
 
 ## Requirements
 
-- **Node.js 18+**
-- **Browser Use Cloud** account and API key (`BROWSER_USE_API_KEY`)
-  - Sign up at [cloud.browser-use.com](https://cloud.browser-use.com)
-- **Browser Use profile** synced with your logged-in Grammarly session (`BROWSER_USE_PROFILE_ID`)
-  - See [Browser Use Cloud Docs](https://docs.browser-use.com/cloud/persistent-browser) for profile setup
-- **Claude Code CLI** authenticated (for rewriting functionality):
+### All Configurations
+
+- Node.js 18+
+- Grammarly Pro account (for AI detection and plagiarism features)
+- Claude Code CLI for text rewriting:
 
   ```bash
   npm install -g @anthropic-ai/claude-code
-  claude login   # Uses your Claude Pro/Max subscription
+  claude login
   ```
 
-  > **Note:** If you have a Claude Pro or Max subscription, `claude login` is the recommended authentication method — no API key needed, and usage counts against your subscription (not billed separately).
+### Stagehand Provider (Default)
 
-- **npm**, **pnpm**, or **yarn** for installing dependencies
+- [Browserbase](https://www.browserbase.com) account
+- `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`
+
+### Browser Use Provider (Fallback)
+
+- [Browser Use Cloud](https://cloud.browser-use.com) account
+- `BROWSER_USE_API_KEY` and `BROWSER_USE_PROFILE_ID`
+- Browser profile synced with Grammarly login state
 
 ---
 
 ## Installation
 
 ```bash
-git clone https://github.com/your-username/grammarly-browseruse-mcp-server.git
-cd grammarly-browseruse-mcp-server
+git clone https://github.com/BjornMelin/grammarly-mcp.git
+cd grammarly-mcp
+pnpm install
+pnpm build
+```
 
-npm install   # or: pnpm install
-npm run build
+---
+
+## Provider Selection
+
+This server supports two browser automation providers:
+
+| Feature | Stagehand (Default) | Browser Use Cloud |
+|---------|---------------------|-------------------|
+| Provider | Browserbase | Browser Use Cloud |
+| Automation | observe/act/extract | Natural language tasks |
+| Self-healing | Yes | Limited |
+| Session persistence | Context IDs | Profile sync |
+| Debug URL | Real-time | Per-task |
+| Action caching | Yes | No |
+| Reliability | Higher | Moderate |
+
+### When to Use Stagehand
+
+- Production workloads requiring reliability
+- Need session persistence to avoid re-login overhead
+- Want real-time debug visibility
+- Require self-healing for Grammarly UI changes
+
+### When to Use Browser Use Cloud
+
+- Existing Browser Use Cloud setup
+- Prefer simpler natural language task descriptions
+- One-off or testing scenarios
+
+Set the provider via environment variable:
+
+```bash
+BROWSER_PROVIDER=stagehand  # Default
+BROWSER_PROVIDER=browser-use  # Fallback
 ```
 
 ---
 
 ## Environment Variables
 
-Set required environment variables before running:
+### Provider Configuration
 
-```bash
-export BROWSER_USE_API_KEY="bu_..."           # from cloud.browser-use.com
-export BROWSER_USE_PROFILE_ID="profile_..."   # profile synced with Grammarly login
-export LOG_LEVEL="info"                       # optional: debug | info | warn | error
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BROWSER_PROVIDER` | No | `stagehand` | `stagehand` or `browser-use` |
 
-# Optional: Claude API key (only if not using 'claude login')
-# export CLAUDE_API_KEY="sk-ant-..."          # for API key billing instead of subscription
-```
+### Stagehand + Browserbase
 
-**Creating a Browser Use profile:**
+Required when `BROWSER_PROVIDER=stagehand`:
 
-1. Log into Grammarly in your local browser
-2. Use Browser Use Cloud's profile sync tool to capture your session:
-   ```bash
-   npx browser-use-profile sync
-   ```
-3. Note the returned `profile_id` and set it as `BROWSER_USE_PROFILE_ID`
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `BROWSERBASE_API_KEY` | Yes | API key from [browserbase.com](https://www.browserbase.com) |
+| `BROWSERBASE_PROJECT_ID` | Yes | Project ID from Browserbase dashboard |
+| `BROWSERBASE_CONTEXT_ID` | No | Persistent context for Grammarly login state |
+| `BROWSERBASE_SESSION_ID` | No | Reuse existing session (advanced) |
+| `STAGEHAND_MODEL` | No | LLM for Stagehand automation (default: `gpt-4o`) |
+| `STAGEHAND_CACHE_DIR` | No | Directory for action caching |
+
+### Browser Use Cloud
+
+Required when `BROWSER_PROVIDER=browser-use`:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `BROWSER_USE_API_KEY` | Yes | API key from [cloud.browser-use.com](https://cloud.browser-use.com) |
+| `BROWSER_USE_PROFILE_ID` | Yes | Profile with synced Grammarly login |
+
+### Claude Authentication
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CLAUDE_API_KEY` | No | API key for Claude. If not set, uses `claude login` CLI auth |
+
+### Timeouts and Logging
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
+| `CLAUDE_REQUEST_TIMEOUT_MS` | No | `120000` | Claude request timeout (ms) |
+| `CONNECT_TIMEOUT_MS` | No | `30000` | MCP connection timeout (ms) |
 
 ---
 
 ## Running the Server
 
-After building:
-
 ```bash
-npm start
-# or directly:
+pnpm start
+# or
 node dist/server.js
 ```
 
-The server communicates over **stdio** (standard input/output), which is the standard transport for local MCP servers.
+The server uses stdio transport for MCP communication.
 
 ---
 
@@ -145,27 +242,18 @@ The server communicates over **stdio** (standard input/output), which is the sta
 
 ### Claude Code CLI
 
-Add to your Claude Code MCP settings (`~/.claude/claude_desktop_config.json` or via CLI):
-
 ```bash
-claude mcp add grammarly-browseruse -- node /absolute/path/to/grammarly-browseruse-mcp-server/dist/server.js
+claude mcp add grammarly -- node /path/to/dist/server.js
 ```
 
-Or manually edit the config:
+Or with environment variables:
 
-```json
-{
-  "mcpServers": {
-    "grammarly-browseruse": {
-      "command": "node",
-      "args": ["/absolute/path/to/grammarly-browseruse-mcp-server/dist/server.js"],
-      "env": {
-        "BROWSER_USE_API_KEY": "bu_...",
-        "BROWSER_USE_PROFILE_ID": "profile_..."
-      }
-    }
-  }
-}
+```bash
+claude mcp add grammarly -- \
+  env BROWSER_PROVIDER=stagehand \
+      BROWSERBASE_API_KEY=bb_... \
+      BROWSERBASE_PROJECT_ID=... \
+  node /path/to/dist/server.js
 ```
 
 ### Claude Desktop
@@ -179,44 +267,43 @@ Edit `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "grammarly-browseruse": {
+    "grammarly": {
       "command": "node",
-      "args": ["/absolute/path/to/grammarly-browseruse-mcp-server/dist/server.js"],
+      "args": ["/absolute/path/to/dist/server.js"],
       "env": {
-        "BROWSER_USE_API_KEY": "bu_...",
-        "BROWSER_USE_PROFILE_ID": "profile_..."
+        "BROWSER_PROVIDER": "stagehand",
+        "BROWSERBASE_API_KEY": "bb_...",
+        "BROWSERBASE_PROJECT_ID": "...",
+        "BROWSERBASE_CONTEXT_ID": "..."
       }
     }
   }
 }
 ```
 
-Restart Claude Desktop after saving. The `grammarly_optimize_text` tool should appear.
-
 ### Cursor
 
-Add to Cursor's MCP configuration (`.cursor/mcp.json` in your project or global settings):
+Add to `.cursor/mcp.json`:
 
 ```json
 {
   "mcpServers": {
-    "grammarly-browseruse": {
+    "grammarly": {
       "command": "node",
-      "args": ["/absolute/path/to/grammarly-browseruse-mcp-server/dist/server.js"],
+      "args": ["/absolute/path/to/dist/server.js"],
       "env": {
-        "BROWSER_USE_API_KEY": "bu_...",
-        "BROWSER_USE_PROFILE_ID": "profile_..."
+        "BROWSER_PROVIDER": "stagehand",
+        "BROWSERBASE_API_KEY": "bb_...",
+        "BROWSERBASE_PROJECT_ID": "..."
       }
     }
   }
 }
 ```
 
-Reload Cursor or restart the MCP extension to activate.
+### VS Code (Continue)
 
-### VS Code (Copilot / Continue)
-
-For **Continue** extension, add to `.continue/config.json`:
+Add to `.continue/config.json`:
 
 ```json
 {
@@ -226,10 +313,11 @@ For **Continue** extension, add to `.continue/config.json`:
         "transport": {
           "type": "stdio",
           "command": "node",
-          "args": ["/absolute/path/to/grammarly-browseruse-mcp-server/dist/server.js"],
+          "args": ["/absolute/path/to/dist/server.js"],
           "env": {
-            "BROWSER_USE_API_KEY": "bu_...",
-            "BROWSER_USE_PROFILE_ID": "profile_..."
+            "BROWSER_PROVIDER": "stagehand",
+            "BROWSERBASE_API_KEY": "bb_...",
+            "BROWSERBASE_PROJECT_ID": "..."
           }
         }
       }
@@ -238,21 +326,20 @@ For **Continue** extension, add to `.continue/config.json`:
 }
 ```
 
-For **GitHub Copilot** with MCP support (if available), check Copilot documentation for MCP server configuration.
-
 ### Windsurf
 
-Add to Windsurf's MCP configuration file (`~/.windsurf/mcp.json` or project-level):
+Add to `~/.windsurf/mcp.json`:
 
 ```json
 {
   "mcpServers": {
-    "grammarly-browseruse": {
+    "grammarly": {
       "command": "node",
-      "args": ["/absolute/path/to/grammarly-browseruse-mcp-server/dist/server.js"],
+      "args": ["/absolute/path/to/dist/server.js"],
       "env": {
-        "BROWSER_USE_API_KEY": "bu_...",
-        "BROWSER_USE_PROFILE_ID": "profile_..."
+        "BROWSER_PROVIDER": "stagehand",
+        "BROWSERBASE_API_KEY": "bb_...",
+        "BROWSERBASE_PROJECT_ID": "..."
       }
     }
   }
@@ -261,18 +348,17 @@ Add to Windsurf's MCP configuration file (`~/.windsurf/mcp.json` or project-leve
 
 ### OpenAI Codex CLI
 
-For OpenAI's Codex CLI with MCP support, add to your Codex configuration:
-
 ```json
 {
   "mcp_servers": {
-    "grammarly-browseruse": {
+    "grammarly": {
       "type": "stdio",
       "command": "node",
-      "args": ["/absolute/path/to/grammarly-browseruse-mcp-server/dist/server.js"],
+      "args": ["/absolute/path/to/dist/server.js"],
       "env": {
-        "BROWSER_USE_API_KEY": "bu_...",
-        "BROWSER_USE_PROFILE_ID": "profile_..."
+        "BROWSER_PROVIDER": "stagehand",
+        "BROWSERBASE_API_KEY": "bb_...",
+        "BROWSERBASE_PROJECT_ID": "..."
       }
     }
   }
@@ -281,44 +367,42 @@ For OpenAI's Codex CLI with MCP support, add to your Codex configuration:
 
 ### Generic stdio MCP Hosts
 
-Any MCP-compatible host supporting stdio transport can use:
-
 ```json
 {
   "type": "stdio",
   "command": "node",
-  "args": ["/absolute/path/to/grammarly-browseruse-mcp-server/dist/server.js"],
+  "args": ["/absolute/path/to/dist/server.js"],
   "env": {
-    "BROWSER_USE_API_KEY": "bu_...",
-    "BROWSER_USE_PROFILE_ID": "profile_..."
+    "BROWSER_PROVIDER": "stagehand",
+    "BROWSERBASE_API_KEY": "bb_...",
+    "BROWSERBASE_PROJECT_ID": "..."
   }
 }
 ```
 
 ---
 
-## Tool: `grammarly_optimize_text`
+## Tool: grammarly_optimize_text
 
-### Input Schema
+### Input Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `text` | string | *(required)* | The text to analyze/optimize |
-| `mode` | enum | `"optimize"` | `"score_only"`, `"optimize"`, or `"analyze"` |
-| `max_ai_percent` | number | `10` | Target AI detection threshold (%) |
-| `max_plagiarism_percent` | number | `5` | Target plagiarism threshold (%) |
-| `max_iterations` | number | `5` | Maximum rewrite iterations |
-| `tone` | enum | `"neutral"` | `"neutral"`, `"formal"`, `"informal"`, `"academic"`, `"custom"` |
-| `domain_hint` | string | — | Optional domain context (e.g., "legal", "medical") |
+| `text` | string | *(required)* | Text to analyze/optimize |
+| `mode` | enum | `optimize` | `score_only`, `optimize`, or `analyze` |
+| `max_ai_percent` | number | `10` | Target AI detection threshold (0-100) |
+| `max_plagiarism_percent` | number | `5` | Target plagiarism threshold (0-100) |
+| `max_iterations` | number | `5` | Maximum rewrite iterations (1-20) |
+| `tone` | enum | `neutral` | `neutral`, `formal`, `informal`, `academic`, `custom` |
+| `domain_hint` | string | — | Domain context (e.g., "legal", "medical") |
 | `custom_instructions` | string | — | Additional rewriting instructions |
-| `browser_use_llm` | enum | `"browser-use-llm"` | LLM for browser automation (see [LLM Options](#browser-use-llm-options)) |
-| `proxy_country_code` | string | — | ISO 3166-1 alpha-2 country code for geo-routing (e.g., `"us"`, `"gb"`) |
-| `response_format` | enum | `"json"` | Output format: `"json"` or `"markdown"` |
-| `max_steps` | number | `25` | Maximum Browser Use steps per task (prevents runaway automation) |
+| `proxy_country_code` | string | — | ISO 3166-1 alpha-2 country code for geo-routing |
+| `response_format` | enum | `json` | `json` or `markdown` |
+| `max_steps` | number | `25` | Maximum browser automation steps (5-100) |
 
 ### Output Schema
 
-```jsonc
+```json
 {
   "final_text": "string",
   "ai_detection_percent": "number | null",
@@ -334,184 +418,251 @@ Any MCP-compatible host supporting stdio transport can use:
     }
   ],
   "notes": "string",
-  "live_url": "string | null"  // Real-time browser preview URL for debugging
+  "live_url": "string | null",
+  "provider": "string"
 }
 ```
 
-The result is returned as both structured JSON and a `text` content block for compatibility with all MCP hosts.
+### Stagehand LLM Configuration
 
-When `response_format: "markdown"` is used, the output is formatted as a human-readable report with tables and sections.
+When using Stagehand, the server automatically selects an LLM for browser automation:
+
+**Priority order:**
+
+1. **Claude Code CLI** (default) - Uses `claude login` authentication
+2. **OpenAI** - Requires `OPENAI_API_KEY`
+3. **Anthropic** - Requires `ANTHROPIC_API_KEY`
+4. **Google** - Requires `GOOGLE_GENERATIVE_AI_API_KEY`
+
+Override with `STAGEHAND_MODEL`:
+
+```bash
+STAGEHAND_MODEL=gpt-4o        # Default
+STAGEHAND_MODEL=gpt-4o-mini   # Budget option
+```
 
 ### Browser Use LLM Options
 
-The `browser_use_llm` parameter selects which model drives browser automation. Default is `browser-use-llm` which is **cheapest AND most optimized** for browser tasks.
+When using Browser Use Cloud (`BROWSER_PROVIDER=browser-use`), the automation uses Browser Use's built-in LLM at $0.002/step.
 
-| Model | Cost/Step | Best For |
-|-------|-----------|----------|
-| **`browser-use-llm`** | **$0.002** | ⭐ **Default**: Cheapest + optimized for browser automation |
-| `gemini-flash-lite-latest` | $0.005 | Ultra budget |
-| `gemini-flash-latest` | $0.005 | Budget + fast |
-| `gpt-4.1-mini` | $0.0075 | Budget OpenAI |
-| `gemini-2.5-flash` | $0.0075 | Budget Google |
-| `gpt-4o-mini` | $0.01 | Simple tasks |
-| `llama-4-maverick-17b-128e-instruct` | $0.01 | Open source |
-| `o4-mini` | $0.02 | OpenAI reasoning |
-| `gpt-4.1` | $0.025 | OpenAI latest |
-| `gemini-2.5-pro` | $0.025 | Google pro |
-| `o3` | $0.03 | Best OpenAI accuracy |
-| `gemini-3-pro-preview` | $0.03 | Google vision preview |
-| `claude-3-7-sonnet-20250219` | $0.03 | Anthropic balanced |
-| `gpt-4o` | $0.03 | Complex reasoning |
-| `claude-sonnet-4-20250514` | $0.05 | Anthropic accurate |
-| `claude-sonnet-4-5-20250929` | $0.05 | Anthropic latest |
-| `claude-opus-4-5-20251101` | $0.10 | Anthropic best (premium) |
+---
 
-**Cost estimate per task** (assuming ~15 steps):
+## Session Persistence
 
-| Mode | Steps | Cost @ $0.002/step |
-|------|-------|-------------------|
-| `score_only` | ~15 | ~$0.04 |
-| `analyze` | ~15 | ~$0.04 |
-| `optimize` (5 iterations) | ~90 | ~$0.19 |
+Browserbase contexts allow you to persist Grammarly login state across sessions.
 
-*Includes $0.01 task initialization fee per task*
+### How Persistence Works
+
+1. **First run**: Server creates a Browserbase session. Use the debug URL to manually log into Grammarly.
+2. **Note context ID**: The context ID appears in server logs or session response.
+3. **Subsequent runs**: Set `BROWSERBASE_CONTEXT_ID` to skip login.
+
+### Setup
+
+```bash
+# First run - no context, log in manually via debug URL
+BROWSERBASE_API_KEY=bb_...
+BROWSERBASE_PROJECT_ID=...
+
+# After logging in, add context ID for subsequent runs
+BROWSERBASE_CONTEXT_ID=ctx_...
+```
+
+### Performance
+
+| Scenario | Initialization Time |
+|----------|---------------------|
+| New session, no context | ~30-45 seconds |
+| Existing context | ~5-10 seconds |
+| Reusing active session | ~1-2 seconds |
 
 ---
 
 ## How It Works
 
-### 1. Browser Use + Grammarly Docs
+### Architecture
 
-The server uses Browser Use Cloud via `browser-use-sdk`:
-
-```
-sessions.createSession({ profileId: BROWSER_USE_PROFILE_ID })
-tasks.createTask({ sessionId, llm: "browser-use-llm", task, schema })
-```
-
-The automated browser agent:
-1. Opens `https://app.grammarly.com`
-2. Creates a new document
-3. Pastes your text
-4. Runs AI Detector + Plagiarism Checker agents
-5. Returns structured scores (`aiDetectionPercent`, `plagiarismPercent`)
-
-### 2. Claude via Vercel AI SDK v5
-
-Rewriting and analysis use `ai-sdk-provider-claude-code`:
-
-```typescript
-// Structured rewrites
-generateObject({ model: claudeCode('sonnet'), schema, prompt })
-
-// Text summaries
-generateText({ model: claudeCode('sonnet'), prompt })
+```text
+MCP Client (Claude Code, Cursor, VS Code, etc.)
+    │
+    └── grammarly_optimize_text tool
+        │
+        ├── Provider Abstraction
+        │    ├── StagehandProvider (default)
+        │    │   ├── BrowserbaseSessionManager
+        │    │   ├── Stagehand (observe/act/extract)
+        │    │   └── Multi-LLM Client
+        │    │
+        │    └── BrowserUseProvider (fallback)
+        │        └── Browser Use SDK
+        │
+        └── Claude Client (text rewriting)
+            └── ai-sdk-provider-claude-code
 ```
 
-### 3. Optimization Loop
+### Stagehand Flow
+
+1. Get or create Browserbase session with optional context
+2. Initialize Stagehand instance connected to session
+3. Navigate to app.grammarly.com
+4. Use `observe()` to find UI elements (new document button, AI detector)
+5. Use `act()` to interact (click, type text)
+6. Use `extract()` with Zod schema to get structured scores
+7. Return scores with debug URL
+
+### Browser Use Flow
+
+1. Create Browser Use session with synced profile
+2. Send natural language task to Browser Use agent
+3. Agent navigates Grammarly, pastes text, runs checks
+4. Return structured scores
+
+### Optimization Loop
 
 1. **Initial scoring** (iteration 0) on original text
-2. **In `optimize` mode**: Rewrite → re-score loop up to `max_iterations`
-3. **Early termination** when both AI and plagiarism thresholds are satisfied
+2. **In optimize mode**: Loop up to `max_iterations`:
+   - Claude rewrites text based on current scores, tone, domain
+   - Re-score via Grammarly
+   - Break early if thresholds met
+3. **Generate summary** via Claude
 
 ---
 
-## Example Usage
+## Development
 
-Once configured, you can invoke the tool from any MCP-compatible client:
+### Build & Quality
 
-**Score only (no rewriting):**
-```
-Use grammarly_optimize_text with mode "score_only" on this text:
-"Your text here..."
-```
-
-**Full optimization:**
-```
-Optimize this text to reduce AI detection below 10%:
-"Your text here..."
+```bash
+pnpm install        # Install dependencies
+pnpm build          # Compile TypeScript
+pnpm type-check     # Type checking only
+pnpm biome:check    # Lint + format check
+pnpm biome:fix      # Auto-fix lint + format
+pnpm check-all      # Type check + lint
 ```
 
-**Academic tone with custom instructions:**
+### Testing
+
+```bash
+pnpm test           # Watch mode
+pnpm test:run       # Run once
+pnpm test:coverage  # With coverage report
+pnpm test:unit      # Unit tests only
+pnpm test:integration  # Integration tests
 ```
-Use grammarly_optimize_text with:
-- mode: "optimize"
-- tone: "academic"
-- custom_instructions: "Maintain technical accuracy for a peer-reviewed journal"
-- text: "Your research text here..."
-```
+
+**Coverage thresholds** (enforced in CI): 85% lines, 85% functions, 75% branches.
+
+Tests use Vitest with V8 coverage. See `tests/` for test structure and `CLAUDE.md` for testing conventions.
 
 ---
 
 ## Troubleshooting
 
-### Server won't start
+### Server Issues
 
-**Problem:** `Error: BROWSER_USE_API_KEY is required`
+#### Server won't start
 
-**Solution:** Ensure environment variables are set before starting the server, or include them in your MCP client configuration's `env` block.
+Check that required environment variables are set:
 
-### Browser Use session fails
+- Stagehand: `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`
+- Browser Use: `BROWSER_USE_API_KEY`, `BROWSER_USE_PROFILE_ID`
 
-**Problem:** `Session creation failed` or timeout errors
+#### Tool not appearing in client
 
-**Solution:**
-1. Verify your `BROWSER_USE_API_KEY` is valid at [cloud.browser-use.com](https://cloud.browser-use.com)
-2. Check that your profile ID exists and is properly synced
-3. Ensure your Grammarly session hasn't expired in the synced profile
+- Verify path to `dist/server.js` is absolute and correct
+- Run `pnpm build` to ensure compilation succeeded
+- Restart your MCP client after configuration changes
 
-### AI detection scores are null
+### Stagehand Issues
 
-**Problem:** `ai_detection_percent` returns `null`
+#### Browserbase session creation fails
 
-**Solution:** Your Grammarly plan may not include AI Detector. This feature requires a Grammarly Pro subscription with AI detection enabled.
+- Verify API key and project ID at [browserbase.com](https://www.browserbase.com)
+- Check Browserbase dashboard for quota/limits
 
-### Tool not appearing in client
+#### Context not persisting login
 
-**Problem:** The `grammarly_optimize_text` tool doesn't show up
+- Ensure you logged into Grammarly while context was active
+- Context ID must match the session where login occurred
+- Grammarly sessions may expire; re-login if needed
 
-**Solution:**
-1. Verify the path to `dist/server.js` is absolute and correct
-2. Check that `npm run build` completed successfully
-3. Restart your MCP client after configuration changes
-4. Check client logs for MCP connection errors
+#### Self-heal failures
 
-### Claude Code authentication issues
+- Grammarly UI may have changed significantly
+- Try with `LOG_LEVEL=debug` to see Stagehand observations
+- Report persistent issues
 
-**Problem:** Rewriting fails with authentication errors
+### Browser Use Issues
 
-**Solution (for CLI auth / Pro/Max subscription):**
+#### Session creation fails
+
+- Verify API key at [cloud.browser-use.com](https://cloud.browser-use.com)
+- Check that profile exists and is properly synced
+
+#### Profile sync issues
+
+- Re-sync your Grammarly login using Browser Use tools
+- Grammarly cookies may have expired
+
+### Grammarly Issues
+
+#### AI detection scores are null
+
+Your Grammarly plan may not include AI Detector. This requires Grammarly Pro with AI detection enabled.
+
+#### Plagiarism scores are null
+
+Plagiarism checking requires Grammarly Pro subscription.
+
+### Claude Issues
+
+#### Authentication errors
+
+Using CLI auth (recommended):
+
 ```bash
 claude logout
 claude login
 ```
 
-**Solution (for API key auth):**
-Ensure `CLAUDE_API_KEY` is set correctly in your environment or MCP client's `env` block.
+Using API key:
+Ensure `CLAUDE_API_KEY` is set correctly.
 
 ---
 
 ## Security Considerations
 
-- **API Keys**: Store `BROWSER_USE_API_KEY` securely. Never commit it to version control.
-- **Browser Profile**: Your Browser Use profile contains session cookies for Grammarly. Treat the profile ID as sensitive.
-- **Text Privacy**: Text sent through this tool passes through:
-  1. Browser Use Cloud (for browser automation)
-  2. Grammarly (via their web UI)
-  3. Claude API (for rewriting)
+- **API Keys**: Store securely. Never commit to version control.
+- **Browserbase Contexts**: Contain session cookies. Treat context IDs as sensitive.
+- **Browser Use Profiles**: Contain Grammarly session state. Treat profile IDs as sensitive.
+- **Data Flow**: Text passes through:
+    1. Browserbase or Browser Use Cloud (browser automation)
+    2. Grammarly (via web UI)
+    3. Claude API (for rewriting)
 
-  Review each service's privacy policy for your use case.
-- **Local Execution**: The MCP server runs locally and communicates via stdio, not over the network.
+    Review each service's privacy policy.
+- **Local Execution**: MCP server runs locally via stdio, not over network.
 
 ---
 
 ## Notes and Limitations
 
-- **Grammarly Plan Required**: AI Detector and Plagiarism Checker require a Grammarly Pro subscription. If unavailable, scores return `null`.
-- **UI Dependency**: Browser Use uses natural-language element discovery, not fixed CSS selectors. Grammarly UI changes may break automation.
-- **Text Length Limits**: Very long texts may exceed Browser Use or Claude context limits. Consider chunking in your MCP host logic.
-- **Rate Limits**: Browser Use Cloud and Grammarly may have usage limits. Monitor your quotas.
-- **Progress notifications**: The server uses the public progress-token accessor when available in `@modelcontextprotocol/sdk` (expected in versions ≥ 1.25.x) and falls back to a guarded private `_meta` read on older SDKs.
+- **Grammarly Pro Required**: AI Detector and Plagiarism Checker require Grammarly Pro. Scores return `null` if unavailable.
+- **UI Dependency**: Automation uses observe/act/extract (Stagehand) or natural language (Browser Use). Grammarly UI changes may affect reliability.
+- **Text Length**: Very long texts may exceed context limits. Consider chunking.
+- **Rate Limits**: Browserbase, Browser Use Cloud, and Grammarly have usage limits.
+- **Session Limits**: Browserbase sessions have timeout limits. Use contexts for persistence.
+
+---
+
+## External Resources
+
+- **Browserbase**: [browserbase.com](https://www.browserbase.com) | [Docs](https://docs.browserbase.com)
+- **Stagehand**: [GitHub](https://github.com/browserbase/stagehand) | [Docs](https://docs.stagehand.dev)
+- **Browser Use**: [cloud.browser-use.com](https://cloud.browser-use.com) | [Docs](https://docs.browser-use.com)
+- **Claude Code**: [ai-sdk-provider-claude-code](https://github.com/anthropics/ai-sdk-provider-claude-code)
+- **MCP**: [modelcontextprotocol.io](https://modelcontextprotocol.io)
 
 ---
 

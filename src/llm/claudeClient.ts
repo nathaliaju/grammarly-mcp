@@ -63,7 +63,8 @@ const AnalysisSchema = z.object({
     ),
 });
 
-function chooseClaudeModel(
+/** @internal Exported for testing */
+export function chooseClaudeModel(
   textLength: number,
   maxIterations: number,
 ): "sonnet" | "opus" {
@@ -97,10 +98,12 @@ export async function rewriteTextWithClaude(
   const modelId = chooseClaudeModel(originalText.length, maxIterations);
   const model = claudeCode(modelId);
 
+  // Use "an" for tones starting with a vowel sound (informal, academic)
+  const article = /^[aeiou]/i.test(tone) ? "an" : "a";
   const toneDescription =
     tone === "custom"
       ? "Use a natural human tone guided by the custom instructions."
-      : `Use a ${tone} tone that feels like a human wrote it.`;
+      : `Use ${article} ${tone} tone that feels like a human wrote it.`;
 
   const domainText = domainHint ? `Domain: ${domainHint.trim()}.\n` : "";
 
