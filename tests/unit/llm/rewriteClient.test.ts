@@ -395,6 +395,7 @@ describe("rewriteText", () => {
 			mockGenerateObject.mockImplementationOnce(() => new Promise(() => {}));
 
 			const promise = rewriteText(baseConfig, baseParams);
+			promise.catch(() => {});
 			const expectation = expect(promise).rejects.toThrow(
 				`Rewrite request exceeded timeout of ${baseConfig.llmRequestTimeoutMs}ms`,
 			);
