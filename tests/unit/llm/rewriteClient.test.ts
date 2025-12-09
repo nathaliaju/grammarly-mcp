@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../../../src/config";
 import {
 	type RewriteParams,
-	analyzeTextWithClaude,
+	analyzeText,
 	chooseClaudeModel,
+	detectRewriteProvider,
 	RewriterToneSchema,
-	rewriteTextWithClaude,
-	summarizeOptimizationWithClaude,
-} from "../../../src/llm/claudeClient";
+	rewriteText,
+	summarizeOptimization,
+} from "../../../src/llm/rewriteClient";
 
 // Mock the AI SDK
 vi.mock("ai", () => ({
@@ -20,14 +21,30 @@ vi.mock("ai-sdk-provider-claude-code", () => ({
 	claudeCode: vi.fn().mockReturnValue({ modelId: "claude-code-mock" }),
 }));
 
+// Mock the openai provider
+vi.mock("@ai-sdk/openai", () => ({
+	openai: vi.fn().mockReturnValue({ modelId: "openai-mock" }),
+}));
+
+// Mock the google provider
+vi.mock("@ai-sdk/google", () => ({
+	google: vi.fn().mockReturnValue({ modelId: "google-mock" }),
+}));
+
+// Mock the anthropic provider
+vi.mock("@ai-sdk/anthropic", () => ({
+	anthropic: vi.fn().mockReturnValue({ modelId: "anthropic-mock" }),
+}));
+
 // Import mocked modules
 import { generateObject, generateText } from "ai";
 
 const mockGenerateObject = generateObject as ReturnType<typeof vi.fn>;
 const mockGenerateText = generateText as ReturnType<typeof vi.fn>;
 
-// Test config
-const testConfig: AppConfig = {
+// Base test config
+const baseConfig: AppConfig = {
+	ignoreSystemEnv: false,
 	browserProvider: "stagehand",
 	browserUseApiKey: undefined,
 	browserUseProfileId: undefined,
@@ -35,10 +52,19 @@ const testConfig: AppConfig = {
 	browserbaseProjectId: "test-project-id",
 	browserbaseSessionId: undefined,
 	browserbaseContextId: undefined,
-	stagehandModel: "gpt-4o",
+	stagehandModel: "gemini-2.5-flash",
 	stagehandCacheDir: undefined,
-	claudeApiKey: "test-claude-key",
-	claudeRequestTimeoutMs: 120000,
+	stagehandLlmProvider: undefined,
+	rewriteLlmProvider: undefined,
+	claudeModel: "auto",
+	openaiModel: "gpt-4o",
+	googleModel: "gemini-2.5-flash",
+	anthropicModel: "claude-sonnet-4-20250514",
+	claudeApiKey: undefined,
+	openaiApiKey: undefined,
+	googleApiKey: undefined,
+	anthropicApiKey: undefined,
+	llmRequestTimeoutMs: 120000,
 	connectTimeoutMs: 30000,
 	logLevel: "error",
 	browserUseDefaultTimeoutMs: 300000,
@@ -47,14 +73,107 @@ const testConfig: AppConfig = {
 	defaultMaxIterations: 5,
 };
 
+describe("detectRewriteProvider", () => {
+	it("returns claude-code when no API keys or explicit provider set", () => {
+		expect(detectRewriteProvider(baseConfig)).toBe("claude-code");
+	});
+
+	it("returns explicit rewriteLlmProvider when set", () => {
+		const config = { ...baseConfig, rewriteLlmProvider: "google" as const };
+		expect(detectRewriteProvider(config)).toBe("google");
+	});
+
+	it("explicit provider overrides API key detection", () => {
+		const config = {
+			...baseConfig,
+			rewriteLlmProvider: "claude-code" as const,
+			openaiApiKey: "test-key", // Would normally trigger openai
+		};
+		expect(detectRewriteProvider(config)).toBe("claude-code");
+	});
+
+	it("returns openai when openaiApiKey is set", () => {
+		const config = { ...baseConfig, openaiApiKey: "sk-test" };
+		expect(detectRewriteProvider(config)).toBe("openai");
+	});
+
+	it("returns google when googleApiKey is set", () => {
+		const config = { ...baseConfig, googleApiKey: "google-key" };
+		expect(detectRewriteProvider(config)).toBe("google");
+	});
+
+	it("returns anthropic when anthropicApiKey is set", () => {
+		const config = { ...baseConfig, anthropicApiKey: "sk-ant-test" };
+		expect(detectRewriteProvider(config)).toBe("anthropic");
+	});
+
+	it("returns anthropic when claudeApiKey is set", () => {
+		const config = { ...baseConfig, claudeApiKey: "sk-ant-test" };
+		expect(detectRewriteProvider(config)).toBe("anthropic");
+	});
+
+	it("prioritizes openai over google and anthropic", () => {
+		const config = {
+			...baseConfig,
+			openaiApiKey: "sk-openai",
+			googleApiKey: "google-key",
+			anthropicApiKey: "sk-anthropic",
+		};
+		expect(detectRewriteProvider(config)).toBe("openai");
+	});
+
+	it("prioritizes google over anthropic", () => {
+		const config = {
+			...baseConfig,
+			googleApiKey: "google-key",
+			anthropicApiKey: "sk-anthropic",
+		};
+		expect(detectRewriteProvider(config)).toBe("google");
+	});
+});
+
 describe("chooseClaudeModel", () => {
+	describe("with forced model", () => {
+		it("returns forced haiku regardless of text length", () => {
+			expect(chooseClaudeModel(50000, 10, "haiku")).toBe("haiku");
+		});
+
+		it("returns forced opus for short text", () => {
+			expect(chooseClaudeModel(100, 1, "opus")).toBe("opus");
+		});
+
+		it("returns forced sonnet regardless of conditions", () => {
+			expect(chooseClaudeModel(50000, 10, "sonnet")).toBe("sonnet");
+		});
+
+		it("auto mode uses existing heuristics for short text", () => {
+			expect(chooseClaudeModel(100, 1, "auto")).toBe("haiku");
+		});
+
+		it("auto mode uses existing heuristics for long text", () => {
+			expect(chooseClaudeModel(50000, 10, "auto")).toBe("opus");
+		});
+	});
+
+	describe("selects haiku for", () => {
+		it.each([
+			["short text, few iterations", 2000, 2],
+			["minimum values", 1, 1],
+			["boundary text below 3000", 2999, 3],
+			["short text, single iteration", 1500, 1],
+		])("%s (%d chars, %d iterations)", (_, textLength, iterations) => {
+			expect(chooseClaudeModel(textLength, iterations)).toBe("haiku");
+		});
+	});
+
 	describe("selects sonnet for", () => {
 		it.each([
-			["short text, few iterations", 5000, 5],
+			["moderate text, few iterations", 5000, 5],
 			["boundary text length", 12000, 5],
 			["boundary iterations", 5000, 8],
 			["both at boundary", 12000, 8],
-			["minimum values", 1, 1],
+			["short text but many iterations", 2500, 4],
+			["at 3000 chars threshold", 3000, 3],
 			["typical essay", 8000, 3],
 		])("%s (%d chars, %d iterations)", (_, textLength, iterations) => {
 			expect(chooseClaudeModel(textLength, iterations)).toBe("sonnet");
@@ -75,6 +194,18 @@ describe("chooseClaudeModel", () => {
 	});
 
 	describe("boundary conditions", () => {
+		it("2999 chars with 3 iterations returns haiku", () => {
+			expect(chooseClaudeModel(2999, 3)).toBe("haiku");
+		});
+
+		it("3000 chars returns sonnet (haiku threshold)", () => {
+			expect(chooseClaudeModel(3000, 3)).toBe("sonnet");
+		});
+
+		it("2999 chars with 4 iterations returns sonnet (iterations exceed haiku)", () => {
+			expect(chooseClaudeModel(2999, 4)).toBe("sonnet");
+		});
+
 		it("12000 chars returns sonnet", () => {
 			expect(chooseClaudeModel(12000, 5)).toBe("sonnet");
 		});
@@ -119,7 +250,7 @@ describe("RewriterToneSchema", () => {
 	});
 });
 
-describe("rewriteTextWithClaude", () => {
+describe("rewriteText", () => {
 	const baseParams: RewriteParams = {
 		originalText: "This is some text that needs rewriting.",
 		lastAiPercent: 45,
@@ -148,7 +279,7 @@ describe("rewriteTextWithClaude", () => {
 				},
 			});
 
-			const result = await rewriteTextWithClaude(testConfig, baseParams);
+			const result = await rewriteText(baseConfig, baseParams);
 
 			expect(result).toEqual({
 				rewrittenText: "Rewritten content here.",
@@ -171,7 +302,7 @@ describe("rewriteTextWithClaude", () => {
 				},
 			});
 
-			await rewriteTextWithClaude(testConfig, { ...baseParams, tone });
+			await rewriteText(baseConfig, { ...baseParams, tone });
 
 			const call = mockGenerateObject.mock.calls[0][0];
 			expect(call.prompt).toContain(expectedToneText);
@@ -182,7 +313,7 @@ describe("rewriteTextWithClaude", () => {
 				object: { rewrittenText: "Text", reasoning: "Reason" },
 			});
 
-			await rewriteTextWithClaude(testConfig, {
+			await rewriteText(baseConfig, {
 				...baseParams,
 				domainHint: "academic research",
 			});
@@ -196,7 +327,7 @@ describe("rewriteTextWithClaude", () => {
 				object: { rewrittenText: "Text", reasoning: "Reason" },
 			});
 
-			await rewriteTextWithClaude(testConfig, {
+			await rewriteText(baseConfig, {
 				...baseParams,
 				customInstructions: "Keep technical terms intact",
 			});
@@ -212,7 +343,7 @@ describe("rewriteTextWithClaude", () => {
 				object: { rewrittenText: "Text", reasoning: "Reason" },
 			});
 
-			await rewriteTextWithClaude(testConfig, {
+			await rewriteText(baseConfig, {
 				...baseParams,
 				lastAiPercent: null,
 			});
@@ -226,7 +357,7 @@ describe("rewriteTextWithClaude", () => {
 				object: { rewrittenText: "Text", reasoning: "Reason" },
 			});
 
-			await rewriteTextWithClaude(testConfig, {
+			await rewriteText(baseConfig, {
 				...baseParams,
 				lastPlagiarismPercent: null,
 			});
@@ -240,7 +371,7 @@ describe("rewriteTextWithClaude", () => {
 				object: { rewrittenText: "Text", reasoning: "Reason" },
 			});
 
-			await rewriteTextWithClaude(testConfig, baseParams);
+			await rewriteText(baseConfig, baseParams);
 
 			const call = mockGenerateObject.mock.calls[0][0];
 			expect(call.prompt).toContain("approximately 45%");
@@ -249,37 +380,30 @@ describe("rewriteTextWithClaude", () => {
 	});
 
 	describe("timeout handling", () => {
-		// NOTE: The "throws error when request times out" test is skipped because Vitest's fake timers
-		// interact with Promise.race in a way that causes spurious "unhandled rejection" warnings.
-		// The timeout logic is verified indirectly via the "clears timeout on successful response" test
-		// which confirms the timeout mechanism is set up and cleared properly.
-		it.skip("throws error when request times out", async () => {
-			mockGenerateObject.mockImplementationOnce(
-				() =>
-					new Promise((resolve) => {
-						setTimeout(() => resolve({ object: { rewrittenText: "", reasoning: "" } }), 3600000);
-					})
-			);
-
-			const configWithShortTimeout = {
-				...testConfig,
-				claudeRequestTimeoutMs: 100,
-			};
-
-			const promise = rewriteTextWithClaude(configWithShortTimeout, baseParams);
-			await vi.advanceTimersByTimeAsync(150);
-			await expect(promise).rejects.toThrow("Claude rewrite request exceeded timeout of 100ms");
-		});
-
 		it("clears timeout on successful response", async () => {
 			mockGenerateObject.mockResolvedValueOnce({
 				object: { rewrittenText: "Text", reasoning: "Reason" },
 			});
 
-			await rewriteTextWithClaude(testConfig, baseParams);
+			await rewriteText(baseConfig, baseParams);
 
-			// Verify no pending timers
 			expect(vi.getTimerCount()).toBe(0);
+		});
+
+		it("rejects when request exceeds configured timeout", async () => {
+			// Never resolve the generate call to force timeout path
+			mockGenerateObject.mockImplementationOnce(() => new Promise(() => {}));
+
+			const promise = rewriteText(baseConfig, baseParams);
+			promise.catch(() => {});
+			const expectation = expect(promise).rejects.toThrow(
+				`Rewrite request exceeded timeout of ${baseConfig.llmRequestTimeoutMs}ms`,
+			);
+
+			// Advance timers beyond configured timeout (120_000 ms in baseConfig)
+			await vi.advanceTimersByTimeAsync(baseConfig.llmRequestTimeoutMs + 1);
+
+			await expectation;
 		});
 	});
 
@@ -287,22 +411,22 @@ describe("rewriteTextWithClaude", () => {
 		it("wraps API errors with context", async () => {
 			mockGenerateObject.mockRejectedValueOnce(new Error("API rate limit exceeded"));
 
-			await expect(rewriteTextWithClaude(testConfig, baseParams)).rejects.toThrow(
-				"Claude rewrite failed: API rate limit exceeded"
+			await expect(rewriteText(baseConfig, baseParams)).rejects.toThrow(
+				"Rewrite failed: API rate limit exceeded"
 			);
 		});
 
 		it("handles non-Error exceptions", async () => {
 			mockGenerateObject.mockRejectedValueOnce("String error");
 
-			await expect(rewriteTextWithClaude(testConfig, baseParams)).rejects.toThrow(
-				"Claude rewrite failed: String error"
+			await expect(rewriteText(baseConfig, baseParams)).rejects.toThrow(
+				"Rewrite failed: String error"
 			);
 		});
 	});
 });
 
-describe("analyzeTextWithClaude", () => {
+describe("analyzeText", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 	});
@@ -320,8 +444,8 @@ describe("analyzeTextWithClaude", () => {
 				},
 			});
 
-			const result = await analyzeTextWithClaude(
-				testConfig,
+			const result = await analyzeText(
+				baseConfig,
 				"Test text",
 				25,
 				5,
@@ -338,8 +462,8 @@ describe("analyzeTextWithClaude", () => {
 				object: { analysis: "Analysis result" },
 			});
 
-			await analyzeTextWithClaude(
-				testConfig,
+			await analyzeText(
+				baseConfig,
 				"Test text",
 				25,
 				5,
@@ -360,7 +484,7 @@ describe("analyzeTextWithClaude", () => {
 				object: { analysis: "Analysis" },
 			});
 
-			await analyzeTextWithClaude(testConfig, "Text", null, 5, 10, 5, "neutral");
+			await analyzeText(baseConfig, "Text", null, 5, 10, 5, "neutral");
 
 			const call = mockGenerateObject.mock.calls[0][0];
 			expect(call.prompt).toContain("Current Grammarly AI detection score is unknown (not available).");
@@ -371,32 +495,10 @@ describe("analyzeTextWithClaude", () => {
 				object: { analysis: "Analysis" },
 			});
 
-			await analyzeTextWithClaude(testConfig, "Text", 25, null, 10, 5, "neutral");
+			await analyzeText(baseConfig, "Text", 25, null, 10, 5, "neutral");
 
 			const call = mockGenerateObject.mock.calls[0][0];
 			expect(call.prompt).toContain("Current Grammarly plagiarism / originality score is unknown (not available).");
-		});
-	});
-
-	describe("timeout handling", () => {
-		// NOTE: Skipped due to Vitest fake timer / Promise.race interaction causing spurious unhandled rejection warnings.
-		// Timeout mechanism verified via rewriteTextWithClaude's "clears timeout on successful response" test.
-		it.skip("throws error when request times out", async () => {
-			mockGenerateObject.mockImplementationOnce(
-				() =>
-					new Promise((resolve) => {
-						setTimeout(() => resolve({ object: { analysis: "" } }), 3600000);
-					})
-			);
-
-			const configWithShortTimeout = {
-				...testConfig,
-				claudeRequestTimeoutMs: 100,
-			};
-
-			const promise = analyzeTextWithClaude(configWithShortTimeout, "Text", 25, 5, 10, 5, "neutral");
-			await vi.advanceTimersByTimeAsync(150);
-			await expect(promise).rejects.toThrow("Claude analysis request exceeded timeout of 100ms");
 		});
 	});
 
@@ -405,13 +507,13 @@ describe("analyzeTextWithClaude", () => {
 			mockGenerateObject.mockRejectedValueOnce(new Error("Network error"));
 
 			await expect(
-				analyzeTextWithClaude(testConfig, "Text", 25, 5, 10, 5, "neutral")
-			).rejects.toThrow("Claude analysis failed: Network error");
+				analyzeText(baseConfig, "Text", 25, 5, 10, 5, "neutral")
+			).rejects.toThrow("Analysis failed: Network error");
 		});
 	});
 });
 
-describe("summarizeOptimizationWithClaude", () => {
+describe("summarizeOptimization", () => {
 	const baseSummaryInput = {
 		mode: "optimize" as const,
 		iterationsUsed: 3,
@@ -441,7 +543,7 @@ describe("summarizeOptimizationWithClaude", () => {
 				text: "Optimization completed successfully. AI detection reduced from 45% to 8%.",
 			});
 
-			const result = await summarizeOptimizationWithClaude(testConfig, baseSummaryInput);
+			const result = await summarizeOptimization(baseConfig, baseSummaryInput);
 
 			expect(result).toBe("Optimization completed successfully. AI detection reduced from 45% to 8%.");
 			expect(mockGenerateText).toHaveBeenCalledTimes(1);
@@ -454,7 +556,7 @@ describe("summarizeOptimizationWithClaude", () => {
 		] as const)("includes mode %s in prompt", async (mode, expectedText) => {
 			mockGenerateText.mockResolvedValueOnce({ text: "Summary" });
 
-			await summarizeOptimizationWithClaude(testConfig, {
+			await summarizeOptimization(baseConfig, {
 				...baseSummaryInput,
 				mode,
 			});
@@ -466,7 +568,7 @@ describe("summarizeOptimizationWithClaude", () => {
 		it("includes history as JSON in prompt", async () => {
 			mockGenerateText.mockResolvedValueOnce({ text: "Summary" });
 
-			await summarizeOptimizationWithClaude(testConfig, baseSummaryInput);
+			await summarizeOptimization(baseConfig, baseSummaryInput);
 
 			const call = mockGenerateText.mock.calls[0][0];
 			expect(call.prompt).toContain("History entries:");
@@ -476,7 +578,7 @@ describe("summarizeOptimizationWithClaude", () => {
 		it("handles empty history", async () => {
 			mockGenerateText.mockResolvedValueOnce({ text: "Summary" });
 
-			await summarizeOptimizationWithClaude(testConfig, {
+			await summarizeOptimization(baseConfig, {
 				...baseSummaryInput,
 				history: [],
 			});
@@ -488,36 +590,13 @@ describe("summarizeOptimizationWithClaude", () => {
 			mockGenerateText.mockResolvedValueOnce({ text: "Summary" });
 
 			const longText = "x".repeat(5000);
-			await summarizeOptimizationWithClaude(testConfig, {
+			await summarizeOptimization(baseConfig, {
 				...baseSummaryInput,
 				finalText: longText,
 			});
 
 			const call = mockGenerateText.mock.calls[0][0];
-			// The prompt should contain truncated text, not the full 5000 chars
 			expect(call.prompt.length).toBeLessThan(longText.length + 1000);
-		});
-	});
-
-	describe("timeout handling", () => {
-		// NOTE: Skipped due to Vitest fake timer / Promise.race interaction causing spurious unhandled rejection warnings.
-		// Timeout mechanism verified via rewriteTextWithClaude's "clears timeout on successful response" test.
-		it.skip("throws error when request times out", async () => {
-			mockGenerateText.mockImplementationOnce(
-				() =>
-					new Promise((resolve) => {
-						setTimeout(() => resolve({ text: "" }), 3600000);
-					})
-			);
-
-			const configWithShortTimeout = {
-				...testConfig,
-				claudeRequestTimeoutMs: 100,
-			};
-
-			const promise = summarizeOptimizationWithClaude(configWithShortTimeout, baseSummaryInput);
-			await vi.advanceTimersByTimeAsync(150);
-			await expect(promise).rejects.toThrow("Claude optimization summary request exceeded timeout of 100ms");
 		});
 	});
 
@@ -526,16 +605,16 @@ describe("summarizeOptimizationWithClaude", () => {
 			mockGenerateText.mockRejectedValueOnce(new Error("Server error"));
 
 			await expect(
-				summarizeOptimizationWithClaude(testConfig, baseSummaryInput)
-			).rejects.toThrow("Claude optimization summary failed: Server error");
+				summarizeOptimization(baseConfig, baseSummaryInput)
+			).rejects.toThrow("Optimization summary failed: Server error");
 		});
 
 		it("handles non-Error exceptions", async () => {
 			mockGenerateText.mockRejectedValueOnce({ code: 500, message: "Internal error" });
 
 			await expect(
-				summarizeOptimizationWithClaude(testConfig, baseSummaryInput)
-			).rejects.toThrow("Claude optimization summary failed:");
+				summarizeOptimization(baseConfig, baseSummaryInput)
+			).rejects.toThrow("Optimization summary failed:");
 		});
 	});
 });

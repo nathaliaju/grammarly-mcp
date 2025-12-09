@@ -1,8 +1,7 @@
 import { generateObject, generateText } from "ai";
-import { claudeCode } from "ai-sdk-provider-claude-code";
 import { z } from "zod";
-import type { AppConfig } from "../config";
-import { log } from "../config";
+import type { AppConfig, ClaudeModel, LLMProvider } from "../config";
+import { detectProviderFromApiKeys, log } from "../config";
 
 export const RewriterToneSchema = z.enum([
   "neutral",
@@ -13,21 +12,7 @@ export const RewriterToneSchema = z.enum([
 ]);
 export type RewriterTone = z.infer<typeof RewriterToneSchema>;
 
-/**
- * Log which authentication method will be used.
- * - If API key is set, Claude Code uses API key auth (billed per-use)
- * - If not set, Claude Code uses CLI auth via 'claude login' (Pro/Max subscription)
- */
-function logAuthMethod(apiKey: string | undefined): void {
-  if (apiKey) {
-    log("debug", "Using Claude API key authentication");
-  } else {
-    log(
-      "debug",
-      "Using Claude CLI authentication (Pro/Max subscription via 'claude login')",
-    );
-  }
-}
+export type RewriteProvider = LLMProvider;
 
 export interface RewriteParams {
   originalText: string;
@@ -63,22 +48,103 @@ const AnalysisSchema = z.object({
     ),
 });
 
-/** @internal Exported for testing */
+/**
+ * Detect which LLM provider to use for rewriting based on config.
+ * Priority: explicit REWRITE_LLM_PROVIDER > API key detection > claude-code
+ */
+export function detectRewriteProvider(config: AppConfig): RewriteProvider {
+  if (config.rewriteLlmProvider) {
+    return config.rewriteLlmProvider;
+  }
+  return detectProviderFromApiKeys(config);
+}
+
+/**
+ * Choose Claude model based on text length and iteration count.
+ * @internal Exported for testing
+ */
 export function chooseClaudeModel(
   textLength: number,
   maxIterations: number,
-): "sonnet" | "opus" {
+  forcedModel?: ClaudeModel,
+): "haiku" | "sonnet" | "opus" {
+  if (forcedModel && forcedModel !== "auto") {
+    return forcedModel;
+  }
   // Heuristic: prefer opus for very long texts or high iteration counts.
   // 12k characters ≈ 8–9k tokens, where opus maintains quality and longer context.
   // >8 iterations implies heavier rewrite loops; opus reduces retries and instability.
   if (textLength > 12000 || maxIterations > 8) {
     return "opus";
   }
+  // Haiku: cost optimization for short texts with few iterations.
+  // <3k characters is typically 1-2k tokens; ≤3 iterations is light rewrite work.
+  if (textLength < 3000 && maxIterations <= 3) {
+    return "haiku";
+  }
+  // Sonnet: default for moderate complexity.
   return "sonnet";
 }
 
-/** Rewrite text with Claude to reduce AI detection and plagiarism. */
-export async function rewriteTextWithClaude(
+/**
+ * Get the appropriate model instance based on provider and config.
+ */
+async function getRewriteModel(
+  config: AppConfig,
+  provider: RewriteProvider,
+  textLength = 0,
+  maxIterations = 5,
+) {
+  switch (provider) {
+    case "claude-code": {
+      const { claudeCode } = await import("ai-sdk-provider-claude-code");
+      const modelId = chooseClaudeModel(
+        textLength,
+        maxIterations,
+        config.claudeModel,
+      );
+      return { model: claudeCode(modelId), modelId: `claude-code/${modelId}` };
+    }
+    case "openai": {
+      const { openai } = await import("@ai-sdk/openai");
+      return { model: openai(config.openaiModel), modelId: config.openaiModel };
+    }
+    case "google": {
+      const { google } = await import("@ai-sdk/google");
+      return { model: google(config.googleModel), modelId: config.googleModel };
+    }
+    case "anthropic": {
+      const { anthropic } = await import("@ai-sdk/anthropic");
+      const modelId = config.anthropicModel;
+      return { model: anthropic(modelId), modelId };
+    }
+    default: {
+      const exhaustiveCheck: never = provider;
+      throw new Error(`Unknown rewrite provider: ${exhaustiveCheck}`);
+    }
+  }
+}
+
+/**
+ * Log which authentication method will be used.
+ */
+function logAuthMethod(provider: RewriteProvider, apiKey?: string): void {
+  if (provider === "claude-code") {
+    if (apiKey) {
+      log("debug", "Using Claude API key authentication");
+    } else {
+      log(
+        "debug",
+        "Using Claude CLI authentication (Pro/Max subscription via 'claude login')",
+      );
+    }
+  } else {
+    log("debug", `Using ${provider} provider`);
+  }
+}
+
+/** Rewrite text with the configured provider to reduce AI detection and plagiarism. */
+export async function rewriteText(
   appConfig: AppConfig,
   params: RewriteParams,
 ): Promise<RewriteResult> {
@@ -94,9 +160,15 @@ export async function rewriteTextWithClaude(
     maxIterations,
   } = params;
 
-  logAuthMethod(appConfig.claudeApiKey);
-  const modelId = chooseClaudeModel(originalText.length, maxIterations);
-  const model = claudeCode(modelId);
+  const provider = detectRewriteProvider(appConfig);
+  logAuthMethod(provider, appConfig.claudeApiKey);
+
+  const { model, modelId } = await getRewriteModel(
+    appConfig,
+    provider,
+    originalText.length,
+    maxIterations,
+  );
 
   // Use "an" for tones starting with a vowel sound (informal, academic)
   const article = /^[aeiou]/i.test(tone) ? "an" : "a";
@@ -170,8 +242,8 @@ export async function rewriteTextWithClaude(
     "-----",
   ].join("\n");
 
-  const timeoutMs = appConfig.claudeRequestTimeoutMs;
-  log("info", "Calling Claude for rewrite", { modelId });
+  const timeoutMs = appConfig.llmRequestTimeoutMs;
+  log("info", "Calling for rewrite", { provider, modelId });
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -184,15 +256,14 @@ export async function rewriteTextWithClaude(
       }),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
-          log("error", "Claude rewrite timed out", {
+          log("error", "Rewrite timed out", {
+            provider,
             modelId,
             timeoutMs,
             promptPreview: prompt.slice(0, 500),
           });
           reject(
-            new Error(
-              `Claude rewrite request exceeded timeout of ${timeoutMs}ms`,
-            ),
+            new Error(`Rewrite request exceeded timeout of ${timeoutMs}ms`),
           );
         }, timeoutMs);
       }),
@@ -200,15 +271,15 @@ export async function rewriteTextWithClaude(
 
     const object = result.object;
 
-    log("debug", "Claude rewrite completed");
+    log("debug", "Rewrite completed", { provider, modelId });
     return {
       rewrittenText: object.rewrittenText,
       reasoning: object.reasoning,
     };
   } catch (error: unknown) {
-    log("error", "Claude rewrite failed", { error });
+    log("error", "Rewrite failed", { provider, modelId, error });
     throw new Error(
-      `Claude rewrite failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Rewrite failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   } finally {
     if (timeoutId) {
@@ -217,8 +288,8 @@ export async function rewriteTextWithClaude(
   }
 }
 
-/** Analyze text for AI detection and plagiarism risk with Claude. */
-export async function analyzeTextWithClaude(
+/** Analyze text for AI detection and plagiarism risk. */
+export async function analyzeText(
   appConfig: AppConfig,
   text: string,
   aiPercent: number | null,
@@ -228,9 +299,15 @@ export async function analyzeTextWithClaude(
   tone: RewriterTone,
   domainHint?: string,
 ): Promise<string> {
-  const modelId = chooseClaudeModel(text.length, 1);
-  logAuthMethod(appConfig.claudeApiKey);
-  const model = claudeCode(modelId);
+  const provider = detectRewriteProvider(appConfig);
+  logAuthMethod(provider, appConfig.claudeApiKey);
+
+  const { model, modelId } = await getRewriteModel(
+    appConfig,
+    provider,
+    text.length,
+    1,
+  );
 
   const aiText =
     aiPercent === null
@@ -277,9 +354,9 @@ export async function analyzeTextWithClaude(
     "-----",
   ].join("\n");
 
-  log("info", "Calling Claude for analysis", { modelId });
+  log("info", "Calling for analysis", { provider, modelId });
 
-  const timeoutMs = appConfig.claudeRequestTimeoutMs;
+  const timeoutMs = appConfig.llmRequestTimeoutMs;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   try {
@@ -291,15 +368,14 @@ export async function analyzeTextWithClaude(
       }),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
-          log("error", "Claude analysis timed out", {
+          log("error", "Analysis timed out", {
+            provider,
             modelId,
             timeoutMs,
             promptPreview: prompt.slice(0, 500),
           });
           reject(
-            new Error(
-              `Claude analysis request exceeded timeout of ${timeoutMs}ms`,
-            ),
+            new Error(`Analysis request exceeded timeout of ${timeoutMs}ms`),
           );
         }, timeoutMs);
       }),
@@ -307,9 +383,9 @@ export async function analyzeTextWithClaude(
 
     return result.object.analysis;
   } catch (error: unknown) {
-    log("error", "Claude analysis failed", { error });
+    log("error", "Analysis failed", { provider, modelId, error });
     throw new Error(
-      `Claude analysis failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Analysis failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   } finally {
     if (timeoutId) {
@@ -318,8 +394,8 @@ export async function analyzeTextWithClaude(
   }
 }
 
-/** Generate a user-facing summary of the optimization run with Claude. */
-export async function summarizeOptimizationWithClaude(
+/** Generate a user-facing summary of the optimization run. */
+export async function summarizeOptimization(
   appConfig: AppConfig,
   summaryInput: {
     mode: "score_only" | "optimize" | "analyze";
@@ -336,11 +412,17 @@ export async function summarizeOptimizationWithClaude(
     maxPlagiarismPercent: number;
   },
 ): Promise<string> {
-  const modelId = chooseClaudeModel(summaryInput.finalText.length, 1);
-  logAuthMethod(appConfig.claudeApiKey);
-  const model = claudeCode(modelId);
+  const provider = detectRewriteProvider(appConfig);
+  logAuthMethod(provider, appConfig.claudeApiKey);
 
-  const timeoutMs = appConfig.claudeRequestTimeoutMs;
+  const { model, modelId } = await getRewriteModel(
+    appConfig,
+    provider,
+    summaryInput.finalText.length,
+    1,
+  );
+
+  const timeoutMs = appConfig.llmRequestTimeoutMs;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   const prompt = [
@@ -367,7 +449,7 @@ export async function summarizeOptimizationWithClaude(
     "Keep the response under 250 words.",
   ].join("\n");
 
-  log("debug", "Calling Claude for optimization summary", { modelId });
+  log("debug", "Calling for optimization summary", { provider, modelId });
 
   try {
     const result = await Promise.race([
@@ -377,14 +459,15 @@ export async function summarizeOptimizationWithClaude(
       }),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
-          log("error", "Claude optimization summary timed out", {
+          log("error", "Optimization summary timed out", {
+            provider,
             modelId,
             timeoutMs,
             promptPreview: prompt.slice(0, 500),
           });
           reject(
             new Error(
-              `Claude optimization summary request exceeded timeout of ${timeoutMs}ms`,
+              `Optimization summary request exceeded timeout of ${timeoutMs}ms`,
             ),
           );
         }, timeoutMs);
@@ -393,9 +476,9 @@ export async function summarizeOptimizationWithClaude(
 
     return result.text;
   } catch (error: unknown) {
-    log("error", "Claude summary failed", { error });
+    log("error", "Summary failed", { provider, modelId, error });
     throw new Error(
-      `Claude optimization summary failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Optimization summary failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   } finally {
     if (timeoutId) {

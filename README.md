@@ -99,7 +99,7 @@ claude mcp add grammarly -- node $(pwd)/dist/server.js
 - **Dual provider support**: Stagehand + Browserbase (default) or Browser Use Cloud (fallback)
 - **Session persistence**: Browserbase contexts preserve Grammarly login across sessions
 - **Self-healing automation**: Stagehand adapts to DOM changes automatically
-- **Multi-LLM support**: Claude Code CLI, OpenAI, Anthropic, or Google for browser automation
+- **Multi-LLM support**: Separate providers for browser automation (`STAGEHAND_LLM_PROVIDER`) and text rewriting (`REWRITE_LLM_PROVIDER`)
 - **Live debug URLs**: Real-time browser preview during execution
 - **Action caching**: Optional caching for faster repeated operations
 - **Structured output**: JSON or markdown response formats
@@ -182,6 +182,12 @@ BROWSER_PROVIDER=browser-use  # Fallback
 
 ## Environment Variables
 
+### Environment Isolation
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `IGNORE_SYSTEM_ENV` | No | `false` | When `true`, ignores shell env vars and uses only `.env` file. Prevents IDE-inherited env pollution. |
+
 ### Provider Configuration
 
 | Variable | Required | Default | Description |
@@ -198,8 +204,11 @@ Required when `BROWSER_PROVIDER=stagehand`:
 | `BROWSERBASE_PROJECT_ID` | Yes | Project ID from Browserbase dashboard |
 | `BROWSERBASE_CONTEXT_ID` | No | Persistent context for Grammarly login state |
 | `BROWSERBASE_SESSION_ID` | No | Reuse existing session (advanced) |
-| `STAGEHAND_MODEL` | No | LLM for Stagehand automation (default: `gpt-4o`) |
+| `STAGEHAND_MODEL` | No | **Deprecated.** Use `STAGEHAND_LLM_PROVIDER` + model vars instead |
 | `STAGEHAND_CACHE_DIR` | No | Directory for action caching |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | No* | Google API key for Gemini models. Also accepts `GEMINI_API_KEY` |
+
+\* Required when using Google/Gemini models (the default). Get from [aistudio.google.com](https://aistudio.google.com/apikey).
 
 ### Browser Use Cloud
 
@@ -210,18 +219,43 @@ Required when `BROWSER_PROVIDER=browser-use`:
 | `BROWSER_USE_API_KEY` | Yes | API key from [cloud.browser-use.com](https://cloud.browser-use.com) |
 | `BROWSER_USE_PROFILE_ID` | Yes | Profile with synced Grammarly login |
 
-### Claude Authentication
+### LLM Provider Controls
+
+Separate LLM providers for browser automation and text rewriting (can use different providers):
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `STAGEHAND_LLM_PROVIDER` | No | Auto-detect | LLM for browser automation: `claude-code`, `openai`, `google`, `anthropic` |
+| `REWRITE_LLM_PROVIDER` | No | Auto-detect | LLM for text rewriting: `claude-code`, `openai`, `google`, `anthropic` |
+
+If not set, auto-detects from API keys (priority: OpenAI > Google > Anthropic > Claude Code).
+
+### Model Selection
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `CLAUDE_MODEL` | No | `auto` | Claude model: `auto`, `haiku`, `sonnet`, `opus`. Auto-selects based on text length and iteration count. |
+| `ANTHROPIC_MODEL` | No | `claude-sonnet-4-20250514` | Anthropic model id when using direct Anthropic provider. |
+| `OPENAI_MODEL` | No | `gpt-4o` | OpenAI model name |
+| `GOOGLE_MODEL` | No | `gemini-2.5-flash` | Google/Gemini model name |
+
+### API Keys
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `CLAUDE_API_KEY` | No | API key for Claude. If not set, uses `claude login` CLI auth |
+| `CLAUDE_API_KEY` | No | Claude API key. If not set, uses `claude login` CLI auth |
+| `OPENAI_API_KEY` | No* | OpenAI API key. Required when using OpenAI provider. |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | No* | Google API key. Also accepts `GEMINI_API_KEY`. Required for Google provider. |
+| `ANTHROPIC_API_KEY` | No* | Anthropic API key. Required when using direct Anthropic provider. |
+
+\* Required when explicitly setting the corresponding LLM provider or for auto-detection.
 
 ### Timeouts and Logging
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
-| `CLAUDE_REQUEST_TIMEOUT_MS` | No | `120000` | Claude request timeout (ms) |
+| `LLM_REQUEST_TIMEOUT_MS` | No | `120000` | LLM request timeout (ms). `CLAUDE_REQUEST_TIMEOUT_MS` is still accepted for compatibility. |
 | `CONNECT_TIMEOUT_MS` | No | `30000` | MCP connection timeout (ms) |
 
 ---
@@ -423,27 +457,43 @@ Add to `~/.windsurf/mcp.json`:
 }
 ```
 
-### Stagehand LLM Configuration
+### LLM Configuration
 
-When using Stagehand, the server automatically selects an LLM for browser automation:
+This server uses **separate LLM providers** for browser automation and text rewriting:
 
-**Priority order:**
+| Purpose | Env Var | Use Case |
+|---------|---------|----------|
+| Browser automation | `STAGEHAND_LLM_PROVIDER` | Stagehand observe/act/extract operations |
+| Text rewriting | `REWRITE_LLM_PROVIDER` | Claude rewrites text to reduce AI detection |
 
-1. **Claude Code CLI** (default) - Uses `claude login` authentication
-2. **OpenAI** - Requires `OPENAI_API_KEY`
-3. **Anthropic** - Requires `ANTHROPIC_API_KEY`
-4. **Google** - Requires `GOOGLE_GENERATIVE_AI_API_KEY`
-
-Override with `STAGEHAND_MODEL`:
+**Example: Different providers for each task:**
 
 ```bash
-STAGEHAND_MODEL=gpt-4o        # Default
-STAGEHAND_MODEL=gpt-4o-mini   # Budget option
+# Fast Google for browser automation, quality Claude for rewriting
+STAGEHAND_LLM_PROVIDER=google
+GOOGLE_MODEL=gemini-2.5-flash
+REWRITE_LLM_PROVIDER=claude-code
+CLAUDE_MODEL=sonnet
 ```
+
+**Auto-detection priority** (when provider not explicitly set):
+
+1. **OpenAI** - If `OPENAI_API_KEY` is set
+2. **Google** - If `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY` is set
+3. **Anthropic** - If `ANTHROPIC_API_KEY` is set
+4. **Claude Code CLI** (fallback) - Uses `claude login` authentication
+
+**Claude model auto-selection** (when `CLAUDE_MODEL=auto`):
+
+| Text Length | Iterations | Model |
+|-------------|------------|-------|
+| < 3k chars | ≤ 3 | Haiku (fastest, cheapest) |
+| 3k-12k chars | 4-8 | Sonnet (balanced) |
+| > 12k chars | > 8 | Opus (highest quality) |
 
 ### Browser Use LLM Options
 
-When using Browser Use Cloud (`BROWSER_PROVIDER=browser-use`), the automation uses Browser Use's built-in LLM at $0.002/step.
+When using Browser Use Cloud (`BROWSER_PROVIDER=browser-use`), the automation uses Browser Use's built-in LLM at $0.002/step. Text rewriting still uses the configured `REWRITE_LLM_PROVIDER`.
 
 ---
 
@@ -496,8 +546,8 @@ MCP Client (Claude Code, Cursor, VS Code, etc.)
         │    └── BrowserUseProvider (fallback)
         │        └── Browser Use SDK
         │
-        └── Claude Client (text rewriting)
-            └── ai-sdk-provider-claude-code
+        └── Rewrite Client (multi-provider text rewriting)
+            └── Claude Code / OpenAI / Google / Anthropic
 ```
 
 ### Stagehand Flow
@@ -521,10 +571,10 @@ MCP Client (Claude Code, Cursor, VS Code, etc.)
 
 1. **Initial scoring** (iteration 0) on original text
 2. **In optimize mode**: Loop up to `max_iterations`:
-   - Claude rewrites text based on current scores, tone, domain
+   - LLM (via `REWRITE_LLM_PROVIDER`) rewrites text based on current scores, tone, domain
    - Re-score via Grammarly
    - Break early if thresholds met
-3. **Generate summary** via Claude
+3. **Generate summary** via configured rewrite LLM provider
 
 ---
 

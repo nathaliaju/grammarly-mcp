@@ -8,11 +8,11 @@ import {
 import type { AppConfig } from "./config";
 import { log } from "./config";
 import {
-  analyzeTextWithClaude,
+  analyzeText,
   RewriterToneSchema,
-  rewriteTextWithClaude,
-  summarizeOptimizationWithClaude,
-} from "./llm/claudeClient";
+  rewriteText,
+  summarizeOptimization,
+} from "./llm/rewriteClient";
 
 export const ToolInputSchema = z.object({
   text: z.string().min(1, "text is required"),
@@ -359,7 +359,7 @@ export async function runGrammarlyOptimization(
     if (mode === "analyze") {
       await onProgress?.("Analyzing text with Claude...", 50);
 
-      const analysis = await analyzeTextWithClaude(
+      const analysis = await analyzeText(
         appConfig,
         currentText,
         lastScores.aiDetectionPercent,
@@ -412,7 +412,7 @@ export async function runGrammarlyOptimization(
         iterationProgress,
       );
 
-      const rewriteResult = await rewriteTextWithClaude(appConfig, {
+      const rewriteResult = await rewriteText(appConfig, {
         originalText: currentText,
         lastAiPercent: lastScores.aiDetectionPercent,
         lastPlagiarismPercent: lastScores.plagiarismPercent,
@@ -480,8 +480,8 @@ export async function runGrammarlyOptimization(
     // Progress: Generating summary
     await onProgress?.("Generating optimization summary...", 92);
 
-    // Final summary via Claude (optional but useful).
-    const notes = await summarizeOptimizationWithClaude(appConfig, {
+    // Final summary via LLM (optional but useful).
+    const notes = await summarizeOptimization(appConfig, {
       mode,
       iterationsUsed,
       thresholdsMet: reachedThresholds,

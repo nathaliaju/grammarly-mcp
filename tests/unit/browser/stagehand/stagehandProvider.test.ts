@@ -30,7 +30,7 @@ vi.mock("../../../../src/browser/stagehand/sessionManager", () => ({
 // Mock stagehand LLM
 vi.mock("../../../../src/llm/stagehandLlm", () => ({
 	createStagehandLlmClient: vi.fn().mockResolvedValue({}),
-	getLlmModelName: vi.fn().mockReturnValue("gpt-4o"),
+	getLlmModelName: vi.fn().mockReturnValue("gemini-2.5-flash"),
 }));
 
 // Mock grammarly task
@@ -42,6 +42,7 @@ vi.mock("../../../../src/browser/stagehand/grammarlyTask", () => ({
 import { StagehandProvider } from "../../../../src/browser/stagehand/index";
 
 const baseConfig: AppConfig = {
+	ignoreSystemEnv: false,
 	browserProvider: "stagehand",
 	browserUseApiKey: undefined,
 	browserUseProfileId: undefined,
@@ -49,10 +50,19 @@ const baseConfig: AppConfig = {
 	browserbaseProjectId: "test-project-id",
 	browserbaseSessionId: undefined,
 	browserbaseContextId: undefined,
-	stagehandModel: "gpt-4o",
+	stagehandModel: "gemini-2.5-flash",
 	stagehandCacheDir: undefined,
+	stagehandLlmProvider: undefined,
+	rewriteLlmProvider: undefined,
+	claudeModel: "auto",
+	openaiModel: "gpt-4o",
+	googleModel: "gemini-2.5-flash",
+	anthropicModel: "claude-sonnet-4-20250514",
 	claudeApiKey: "test-claude-key",
-	claudeRequestTimeoutMs: 120000,
+	openaiApiKey: undefined,
+	googleApiKey: undefined,
+	anthropicApiKey: undefined,
+	llmRequestTimeoutMs: 120000,
 	connectTimeoutMs: 30000,
 	logLevel: "error",
 	browserUseDefaultTimeoutMs: 300000,
