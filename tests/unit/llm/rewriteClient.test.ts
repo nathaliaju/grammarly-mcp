@@ -389,6 +389,21 @@ describe("rewriteText", () => {
 
 			expect(vi.getTimerCount()).toBe(0);
 		});
+
+		it("rejects when request exceeds configured timeout", async () => {
+			// Never resolve the generate call to force timeout path
+			mockGenerateObject.mockImplementationOnce(() => new Promise(() => {}));
+
+			const promise = rewriteText(baseConfig, baseParams);
+			const expectation = expect(promise).rejects.toThrow(
+				`Rewrite request exceeded timeout of ${baseConfig.llmRequestTimeoutMs}ms`,
+			);
+
+			// Advance timers beyond configured timeout (120_000 ms in baseConfig)
+			await vi.advanceTimersByTimeAsync(baseConfig.llmRequestTimeoutMs + 1);
+
+			await expectation;
+		});
 	});
 
 	describe("error handling", () => {
